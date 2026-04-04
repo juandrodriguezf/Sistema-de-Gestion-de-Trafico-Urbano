@@ -1,4 +1,4 @@
-# Python
+# Python Standard Ignores
 __pycache__/
 *.py[cod]
 *$py.class
@@ -6,23 +6,8 @@ __pycache__/
 env/
 venv/
 
-# Bases de datos del proyecto (SQLite)
-# Las bases de datos suelen ser ignoradas porque se generan al correr el sistema
-data/*.db
-*.db
-*.db-journal
-
-# Archivos de contexto y enunciados (locales)
-# Mantenemos estos archivos en la carpeta pero no se suben al repo
-# Documentación de Contexto Local (Ignorar código fuente diagramas)
-docs/diagramas_plantUML/*.md
-Proyecto_2026_10.pdf
-RECORDATORIO_AGENT.md
-skill_desarrollo_proyecto.md
-
-# Logs
-*.log
-
-# Carpetas de VS Code u otros editores
+# Visual Studio Code
 .vscode/
-.idea/
+
+# Project Logs
+*.log
