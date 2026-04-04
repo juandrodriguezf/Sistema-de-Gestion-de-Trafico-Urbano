@@ -79,12 +79,13 @@ Para evitar errores de conexión inicial, el sistema debe encenderse en este ord
 
 El programa en PC3 abrirá una interfaz de línea de comandos tras iniciar la base de datos. Comandos disponibles:
 
-| Comando | Acción |
-| :--- | :--- |
-| `status` | Consulta el estado general de todas las intersecciones. |
-| `history [INT_ID]` | Muestra los registros históricos de una intersección específica (ej: `history INT_A1`). |
-| `override [SEM_ID] [STATE]` | Fuerza un cambio de semáforo (ej: `override SEM_A1_N GREEN`). |
-| `exit` | Cierra el servicio de monitoreo de forma segura. |
+| Comando | Acción | Ejemplo |
+| :--- | :--- | :--- |
+| **1** | Consulta el estado de una intersección específica. | `1 INT_C3K2` |
+| **2** | Consulta el estado general de toda la cuadrícula. | `2` |
+| **3** | Lista todos los semáforos activos del sistema. | `3` |
+| **4** | Fuerza un cambio de semáforo (Override manual). | `4 SEM_C3K2_N VERDE ambulancia` |
+| **5** | Cierra el servicio de monitoreo de forma segura. | `5` |
 
 ---
 
