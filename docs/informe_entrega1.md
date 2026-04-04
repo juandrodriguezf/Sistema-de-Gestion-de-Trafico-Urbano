@@ -59,7 +59,7 @@ El sistema se despliega en **3 máquinas (PCs)** con roles específicos:
 
 ### 2.3 Diagrama de Despliegue
 
-Ver: [diagrama_despliegue.md](./diagrama_despliegue.md)
+Ver: [diagrama_despliegue.md](./diagramas_plantUML/diagrama_despliegue.md)
 
 ---
 
@@ -98,7 +98,7 @@ Ver formato completo de todos los mensajes en la skill de diseño (Sección 5).
 
 ### 3.3 Diagrama de Componentes
 
-Ver: [diagrama_componentes.md](./diagrama_componentes.md)
+Ver: [diagrama_componentes.md](./diagramas_plantUML/diagrama_componentes.md)
 
 ---
 
@@ -186,7 +186,7 @@ Donde:
 
 ### 6.4 Diagrama de Secuencia del Failover
 
-Ver: [diagrama_secuencia.md](./diagrama_secuencia.md) — Flujo 3.
+Ver: [diagrama_secuencia.md](./diagramas_plantUML/diagrama_secuencia.md) — Flujo 3.
 
 ---
 
@@ -214,10 +214,10 @@ Ver: [diagrama_secuencia.md](./diagrama_secuencia.md) — Flujo 3.
 
 | Diagrama | Archivo | Notación |
 |----------|---------|----------|
-| Despliegue | [diagrama_despliegue.md](./diagrama_despliegue.md) | Mermaid |
-| Componentes | [diagrama_componentes.md](./diagrama_componentes.md) | Mermaid |
-| Clases | [diagrama_clases.md](./diagrama_clases.md) | Mermaid |
-| Secuencia (3 flujos) | [diagrama_secuencia.md](./diagrama_secuencia.md) | Mermaid |
+| Despliegue | [diagrama_despliegue.md](./diagramas_plantUML/diagrama_despliegue.md) | PlantUML |
+| Componentes | [diagrama_componentes.md](./diagramas_plantUML/diagrama_componentes.md) | PlantUML |
+| Clases | [diagrama_clases.md](./diagramas_plantUML/diagrama_clases.md) | PlantUML |
+| Secuencia (3 flujos) | [diagrama_secuencia.md](./diagramas_plantUML/diagrama_secuencia.md) | PlantUML |
 
 ---
 

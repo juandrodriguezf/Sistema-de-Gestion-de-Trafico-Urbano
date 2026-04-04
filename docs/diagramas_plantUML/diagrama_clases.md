@@ -157,6 +157,7 @@ package "pc3" <<Rectangle>> {
         +send_request(req): MonitoringResponse
         +query_intersection(interseccion: str)
         +query_general()
+        +query_semaforos()
         +send_override(sem_id, estado, motivo)
         +run_cli()
     }

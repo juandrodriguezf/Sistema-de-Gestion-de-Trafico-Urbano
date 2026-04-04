@@ -113,10 +113,11 @@ entrega1_proyecto/
 │   └── test_data/
 ├── docs/                    # Documentación UML
 │   ├── informe_entrega1.md
-│   ├── diagrama_despliegue.md
-│   ├── diagrama_componentes.md
-│   ├── diagrama_clases.md
-│   └── diagrama_secuencia.md
+│   └── diagramas_plantUML/
+│       ├── diagrama_despliegue.md
+│       ├── diagrama_componentes.md
+│       ├── diagrama_clases.md
+│       └── diagrama_secuencia.md
 └── data/                    # Datos de ejecución (runtime)
 ```
 
@@ -135,7 +136,7 @@ entrega1_proyecto/
 ## Documentación
 
 - [Informe de Primera Entrega](docs/informe_entrega1.md)
-- [Diagrama de Despliegue](docs/diagrama_despliegue.md)
-- [Diagrama de Componentes](docs/diagrama_componentes.md)
-- [Diagrama de Clases](docs/diagrama_clases.md)
-- [Diagramas de Secuencia](docs/diagrama_secuencia.md)
+- [Diagrama de Despliegue](docs/diagramas_plantUML/diagrama_despliegue.md)
+- [Diagrama de Componentes](docs/diagramas_plantUML/diagrama_componentes.md)
+- [Diagrama de Clases](docs/diagramas_plantUML/diagrama_clases.md)
+- [Diagramas de Secuencia](docs/diagramas_plantUML/diagrama_secuencia.md)
