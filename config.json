@@ -1,0 +1,54 @@
+{
+    "grid": {
+        "columns": 2,
+        "rows": 2
+    },
+    "sensor_frequency_seconds": 5,
+    "load_generation": "random",
+    "thresholds": {
+        "Q_MAX": 5,
+        "VP_MIN": 35,
+        "D_MAX": 20
+    },
+    "heartbeat_interval_seconds": 5,
+    "heartbeat_timeout_seconds": 15,
+    "zmq_ports": {
+        "broker_frontend": 5555,
+        "broker_backend": 5556,
+        "analytics_to_db": 5557,
+        "analytics_to_lights": 5558,
+        "monitoring_to_analytics": 5559,
+        "db_replication": 5560,
+        "heartbeat": 5561
+    },
+    "pc1_host": "localhost",
+    "pc2_host": "localhost",
+    "pc3_host": "localhost",
+    "data_ranges": {
+        "vehiculos_por_minuto": {
+            "min": 0,
+            "max": 30
+        },
+        "longitud_cola": {
+            "min": 0,
+            "max": 20
+        },
+        "velocidad_promedio": {
+            "min": 5,
+            "max": 60
+        },
+        "densidad": {
+            "min": 0,
+            "max": 50
+        }
+    },
+    "congestion_spike_probability": 0.10,
+    "auth_tokens": {
+        "sensors_prefix": "sensor-token-",
+        "monitoring": "monitor-token-admin-2026"
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "data/system.log"
+    }
+}

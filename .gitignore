@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Bases de datos del proyecto (SQLite)
+# Las bases de datos suelen ser ignoradas porque se generan al correr el sistema
+data/*.db
+*.db
+*.db-journal
+
+# Logs
+*.log
+
+# Carpetas de VS Code u otros editores
+.vscode/
+.idea/

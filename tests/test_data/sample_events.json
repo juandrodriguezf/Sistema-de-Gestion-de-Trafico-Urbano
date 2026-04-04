@@ -1,0 +1,72 @@
+[
+    {
+        "sensor_id": "ESP_C1K1",
+        "tipo_sensor": "espira",
+        "interseccion": "INT_C1K1",
+        "datos": {"vehiculos_por_minuto": 8.5},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "CAM_C1K1",
+        "tipo_sensor": "camara",
+        "interseccion": "INT_C1K1",
+        "datos": {"longitud_cola": 3},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "GPS_C1K1",
+        "tipo_sensor": "gps",
+        "interseccion": "INT_C1K1",
+        "datos": {"densidad": 12.0, "velocidad_promedio": 45.0},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "ESP_C2K2",
+        "tipo_sensor": "espira",
+        "interseccion": "INT_C2K2",
+        "datos": {"vehiculos_por_minuto": 22.0},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "CAM_C2K2",
+        "tipo_sensor": "camara",
+        "interseccion": "INT_C2K2",
+        "datos": {"longitud_cola": 8},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "GPS_C2K2",
+        "tipo_sensor": "gps",
+        "interseccion": "INT_C2K2",
+        "datos": {"densidad": 28.5, "velocidad_promedio": 18.0},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "ESP_C3K3",
+        "tipo_sensor": "espira",
+        "interseccion": "INT_C3K3",
+        "datos": {"vehiculos_por_minuto": 5.0},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "CAM_C3K3",
+        "tipo_sensor": "camara",
+        "interseccion": "INT_C3K3",
+        "datos": {"longitud_cola": 2},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "GPS_C3K3",
+        "tipo_sensor": "gps",
+        "interseccion": "INT_C3K3",
+        "datos": {"densidad": 8.0, "velocidad_promedio": 52.0},
+        "delay_seconds": 1
+    },
+    {
+        "sensor_id": "CAM_C5K5",
+        "tipo_sensor": "camara",
+        "interseccion": "INT_C5K5",
+        "datos": {"longitud_cola": 15},
+        "delay_seconds": 1
+    }
+]
