@@ -34,6 +34,37 @@ Para que el sistema funcione de forma distribuida, cada PC debe contener la carp
 
 ---
 
+## 🎮 Escenarios de Simulación
+
+Puedes ejecutar este sistema en dos modalidades dependiendo de tu entorno de prueba:
+
+### **Opción A: Simulación en un solo computador (Local)**
+Ideal para desarrollo o pruebas rápidas. Los 3 servicios ("PCs") correrán como procesos independientes en la misma máquina.
+1.  **Configuración:** Abre `config.json` y asegúrate de que los hosts sean `"localhost"`:
+    ```json
+    "pc1_host": "localhost",
+    "pc2_host": "localhost",
+    "pc3_host": "localhost"
+    ```
+2.  **Ejecución:** Abre **3 terminales** diferentes y ejecuta los scripts en el orden establecido:
+    - Terminal 1: `python pc3/start_pc3.py`
+    - Terminal 2: `python pc2/start_pc2.py`
+    - Terminal 3: `python pc1/start_pc1.py`
+
+### **Opción B: Simulación en 3 computadores (Distribuida)**
+Requerida para la sustentación final y pruebas de red.
+1.  **Red Local:** Asegúrate de que los 3 computadores estén en la misma red Wi-Fi/LAN y se puedan hacer `ping` entre ellos.
+2.  **Configuración:** En cada PC, edita el archivo `config.json` con las **IPs reales** asignadas:
+    ```json
+    "pc1_host": "192.168.1.10",  // IP del PC de Sensores
+    "pc2_host": "192.168.1.11",  // IP del PC de Analítica
+    "pc3_host": "192.168.1.12"   // IP del PC de Persistencia
+    ```
+    *Nota: El archivo `config.json` debe ser idéntico en las 3 máquinas.*
+3.  **Ejecución:** Sigue el mismo orden de encendido en cada máquina física.
+
+---
+
 ## 🚀 Orden de Ejecución (¡IMPORTANTE!)
 
 Para evitar errores de conexión inicial, el sistema debe encenderse en este orden:
