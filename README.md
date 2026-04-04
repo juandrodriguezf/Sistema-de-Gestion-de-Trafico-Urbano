@@ -28,7 +28,12 @@ pip install -r requirements.txt
 
 ## Ejecución
 
-Abrir **3 terminales** (una por cada PC). Iniciar en este orden:
+El sistema se puede ejecutar en un solo computador (**Simulación Local**) o en 3 computadores (**Distribución Real**). 
+
+**Consulta la [Guía de Operación Completa](GUIA_OPERACION.md) para detalles específicos por PC.**
+
+### Orden de Inicio:
+Abrir **3 terminales** y ejecutar en este orden:
 
 ```bash
 # Terminal 1 — PC3 (Base de datos + Monitoreo)
