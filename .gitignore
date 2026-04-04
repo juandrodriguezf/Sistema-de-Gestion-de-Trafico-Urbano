@@ -14,6 +14,8 @@ data/*.db
 
 # Archivos de contexto y enunciados (locales)
 # Mantenemos estos archivos en la carpeta pero no se suben al repo
+# Documentación de Contexto Local (Ignorar código fuente diagramas)
+docs/diagramas_plantUML/*.md
 Proyecto_2026_10.pdf
 RECORDATORIO_AGENT.md
 skill_desarrollo_proyecto.md

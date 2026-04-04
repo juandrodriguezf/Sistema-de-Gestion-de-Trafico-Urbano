@@ -59,7 +59,7 @@ El sistema se despliega en **3 máquinas (PCs)** con roles específicos:
 
 ### 2.3 Diagrama de Despliegue
 
-Ver: [diagrama_despliegue.md](./diagramas_plantUML/diagrama_despliegue.md)
+Ver: [Diagrama de Despliegue](./diagramas_plantUML/diagrama_despliegue.png)
 
 ---
 
@@ -98,7 +98,7 @@ Ver formato completo de todos los mensajes en la skill de diseño (Sección 5).
 
 ### 3.3 Diagrama de Componentes
 
-Ver: [diagrama_componentes.md](./diagramas_plantUML/diagrama_componentes.md)
+Ver: [Diagrama de Componentes](./diagramas_plantUML/diagrama_componentes.png)
 
 ---
 
@@ -186,7 +186,7 @@ Donde:
 
 ### 6.4 Diagrama de Secuencia del Failover
 
-Ver: [diagrama_secuencia.md](./diagramas_plantUML/diagrama_secuencia.md) — Flujo 3.
+Ver: [Diagrama de Secuencia](./diagramas_plantUML/diagrama_secuencia.png) — Flujo 3.
 
 ---
 
@@ -214,10 +214,10 @@ Ver: [diagrama_secuencia.md](./diagramas_plantUML/diagrama_secuencia.md) — Flu
 
 | Diagrama | Archivo | Notación |
 |----------|---------|----------|
-| Despliegue | [diagrama_despliegue.md](./diagramas_plantUML/diagrama_despliegue.md) | PlantUML |
-| Componentes | [diagrama_componentes.md](./diagramas_plantUML/diagrama_componentes.md) | PlantUML |
-| Clases | [diagrama_clases.md](./diagramas_plantUML/diagrama_clases.md) | PlantUML |
-| Secuencia (3 flujos) | [diagrama_secuencia.md](./diagramas_plantUML/diagrama_secuencia.md) | PlantUML |
+| Despliegue | [diagrama_despliegue.png](./diagramas_plantUML/diagrama_despliegue.png) | PlantUML (Renderizado) |
+| Componentes | [diagrama_componentes.png](./diagramas_plantUML/diagrama_componentes.png) | PlantUML (Renderizado) |
+| Clases | [diagrama_clases.png](./diagramas_plantUML/diagrama_clases.png) | PlantUML (Renderizado) |
+| Secuencia (3 flujos) | [diagrama_secuencia.png](./diagramas_plantUML/diagrama_secuencia.png) | PlantUML (Renderizado) |
 
 ---
 
