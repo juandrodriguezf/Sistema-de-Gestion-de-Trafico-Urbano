@@ -12,6 +12,12 @@ data/*.db
 *.db
 *.db-journal
 
+# Archivos de contexto y enunciados (locales)
+# Mantenemos estos archivos en la carpeta pero no se suben al repo
+Proyecto_2026_10.pdf
+RECORDATORIO_AGENT.md
+skill_desarrollo_proyecto.md
+
 # Logs
 *.log
 
