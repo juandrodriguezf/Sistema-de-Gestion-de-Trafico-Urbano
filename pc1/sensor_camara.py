@@ -1,6 +1,6 @@
 """
-sensor_camara.py - Camera sensor.
-Measures: longitud_cola (queue length — vehicles waiting at intersection).
+sensor_camara.py - sensor de cámara.
+Mide: longitud_cola (cantidad de vehículos esperando en el semáforo).
 """
 
 import random
@@ -43,12 +43,12 @@ class SensorCamara(Sensor):
         self.spike_prob = (config or {}).get("congestion_spike_probability", 0.10)
 
     def generate_data(self) -> dict:
-        """Generate queue length data with occasional congestion spikes."""
+        """Genera datos de longitud de cola con picos de congestión ocasionales."""
         if random.random() < self.spike_prob:
-            # Congestion spike — long queue
+            # congestión
             value = random.randint(int(self.max_val * 0.5), self.max_val)
         else:
-            # Normal traffic — short queue
+            # tráfico normal
             value = random.randint(self.min_val, int(self.max_val * 0.3))
         return {"longitud_cola": value}
 

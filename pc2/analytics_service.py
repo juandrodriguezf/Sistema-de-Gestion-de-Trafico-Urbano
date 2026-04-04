@@ -1,5 +1,5 @@
 """
-analytics_service.py - Core analytics engine for PC2.
+analytics_service.py - motor analítico central para PC2.
 se suscribe a eventos de sensores desde BrokerZMQ (SUB),
 envia comandos de cambio de semaforo,
 y responde a consultas de Monitoreo via REQ/REP.
@@ -54,8 +54,7 @@ class AnalyticsService:
         self.ports = config["zmq_ports"]
         self.running = False
 
-        # ─── Per-intersection state tracking ───
-        # Stores latest metrics: {interseccion_id: {Q, Vp, D, veh_min}}
+        # Almacena métricas más recientes: {interseccion_id: {Q, Vp, D, veh_min}}
         self.intersection_metrics = {}
         self._init_metrics()
 
@@ -63,24 +62,24 @@ class AnalyticsService:
         self.sensor_token_prefix = config.get("auth_tokens", {}).get("sensors_prefix", "")
         self.monitor_token = config.get("auth_tokens", {}).get("monitoring", "")
 
-        # ─── Registered sensors (for validation) ───
+        # ─── sensores registrados (para validación) ───
         self.registered_sensors = set()
         self._init_registered_sensors()
 
-        # ─── DB failover state ───
+        # ─── estado de failover de la BD ───
         self.use_replica = False
         self.last_heartbeat_time = time.time()
         self.heartbeat_timeout = config.get("heartbeat_timeout_seconds", 15)
 
-        # ─── ZMQ Context ───
+        # ─── ZMQ Contexto ───
         self.context = zmq.Context()
 
-        # ─── DB Connection ───
+        # ─── Conexión a la BD ───
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "replica_traffic.db")
         self.replica_db = DatabaseManager(db_path)
 
     def _init_metrics(self):
-        """Initialize metric tracking for all intersections."""
+        """Inicializa el seguimiento de métricas para todas las intersecciones."""
         for c in range(1, self.grid["columns"] + 1):
             for r in range(1, self.grid["rows"] + 1):
                 int_id = f"INT_C{c}K{r}"
@@ -89,7 +88,7 @@ class AnalyticsService:
                 }
 
     def _init_registered_sensors(self):
-        """Build set of all valid sensor IDs."""
+        """Construye el conjunto de todos los IDs de sensores válidos."""
         from shared.constants import SENSOR_TYPES, SENSOR_PREFIXES
         for c in range(1, self.grid["columns"] + 1):
             for r in range(1, self.grid["rows"] + 1):
@@ -98,7 +97,7 @@ class AnalyticsService:
                     self.registered_sensors.add(f"{prefix}_C{c}K{r}")
 
     # ═══════════════════════════════════════════
-    # Traffic Rule Evaluation
+    # Evaluación de reglas de tráfico
     # ═══════════════════════════════════════════
 
     def evaluate_traffic(self, interseccion: str) -> str:
@@ -138,33 +137,33 @@ class AnalyticsService:
             self.intersection_metrics[int_id]["Vp"] = datos.get("velocidad_promedio", 50)
 
     # ═══════════════════════════════════════════
-    # Process Sensor Event
+    # Procesar evento de sensor
     # ═══════════════════════════════════════════
 
     def process_event(self, event: SensorEvent, push_socket: zmq.Socket, light_pub: zmq.Socket):
         """Procesa un evento de sensor: valida, actualiza, evalua y actúa."""
-        # 1. Validate
+        # 1. Valida
         event_dict = json.loads(event.to_json())
         valid, reason = validate_sensor_event(event_dict, self.registered_sensors)
         if not valid:
             logger.warning(f"Evento inválido de {event.sensor_id}: {reason}")
             return
 
-        # 2. Update metrics
+        # 2. Actualiza métricas
         self.update_metrics(event)
         int_id = event.interseccion
 
-        # 3. Evaluate traffic rules
+        # 3. Evalua reglas de tráfico
         estado = self.evaluate_traffic(int_id)
         metrics = self.intersection_metrics[int_id].copy()
 
-        # 4. Determine action
+        # 4. Determina la acción
         accion = None
         if estado == CONGESTION:
-            # Parse intersection to get col/row for semaphore ID
+            # Parsea la intersección para obtener la columna/fila para el ID del semáforo
             parts = int_id.replace("INT_C", "").split("K")
             col, row = int(parts[0]), int(parts[1])
-            sem_id = f"SEM_C{col}K{row}_N"  # Default: change north-facing light
+            sem_id = f"SEM_C{col}K{row}_N"  # Default: cambia luz norte
 
             accion = {
                 "tipo": "CAMBIO_LUZ",
@@ -173,7 +172,7 @@ class AnalyticsService:
                 "estado_nuevo": "VERDE",
             }
 
-            # Send light change command
+            # Envía comando de cambio de luz
             light_cmd = LightAction(
                 semaforo_id=sem_id,
                 nuevo_estado=VERDE,
@@ -183,7 +182,7 @@ class AnalyticsService:
             light_pub.send_string(f"{topic} {light_cmd.to_json()}")
             logger.info(f"CONGESTION en {int_id} → {sem_id} → VERDE")
 
-        # 5. Build traffic state record
+        # 5. Construye el registro de estado de tráfico
         traffic_state = TrafficState(
             interseccion=int_id,
             estado=estado,
@@ -191,11 +190,11 @@ class AnalyticsService:
             accion_tomada=accion,
         )
 
-        # 6. Push to DB
+        # 6. Push a la BD
         db_msg = traffic_state.to_json()
         push_socket.send_string(db_msg)
 
-        # 7. Also store event in replica DB if in failover mode
+        # 7. También almacena el evento en la BD réplica si está en modo de failover
         if self.use_replica:
             try:
                 self.replica_db.insert_event(
@@ -295,7 +294,7 @@ class AnalyticsService:
         return MonitoringResponse(tipo="ERROR", mensaje=f"Tipo de solicitud desconocido: {tipo}")
 
     # ═══════════════════════════════════════════
-    # Heartbeat Monitor (runs in thread)
+    # Monitor de heartbeat (se ejecuta en hilo)
     # ═══════════════════════════════════════════
 
     def monitor_heartbeat(self, hb_socket: zmq.Socket):
@@ -307,7 +306,7 @@ class AnalyticsService:
                     msg = hb_socket.recv_string()
                     self.last_heartbeat_time = time.time()
                     if self.use_replica:
-                        logger.info("¡Heartbeat de PC3 restaurado! Volviendo a la BD principal")
+                        logger.info("Heartbeat de PC3 restaurado! Volviendo a la BD principal")
                         self.use_replica = False
 
                 # Verificar timeout
@@ -321,7 +320,7 @@ class AnalyticsService:
                     time.sleep(1)
 
     # ═══════════════════════════════════════════
-    # Main Run Loop
+    # Bucle principal
     # ═══════════════════════════════════════════
 
     def run(self):
@@ -351,7 +350,7 @@ class AnalyticsService:
         rep_socket.bind(f"tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}")
         logger.info(f"REP bound at tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}")
 
-        # ─── SUB socket: heartbeat from PC3 ───
+        # ─── SUB socket: heartbeat de PC3 ───
         hb_socket = self.context.socket(zmq.SUB)
         hb_socket.connect(f"tcp://{pc3_host}:{self.ports['heartbeat']}")
         hb_socket.setsockopt_string(zmq.SUBSCRIBE, TOPIC_HEARTBEAT)
@@ -381,7 +380,7 @@ class AnalyticsService:
             while self.running:
                 if sub_socket.poll(1000):
                     raw = sub_socket.recv_string()
-                    # Parse: "topic payload"
+                    # Parsea: "topic payload"
                     parts = raw.split(" ", 1)
                     if len(parts) == 2:
                         topic, payload = parts

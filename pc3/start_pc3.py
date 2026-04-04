@@ -1,5 +1,5 @@
 """
-start_pc3.py - Launcher para todos los servicios de PC3.
+start_pc3.py - Lanzador para todos los servicios de PC3.
 Inicia Main DB y Monitoring Service.
 """
 

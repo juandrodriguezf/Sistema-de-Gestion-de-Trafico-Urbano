@@ -1,7 +1,5 @@
 """
 monitoring_service.py - servicio de monitoreo y control.
-Provides a CLI interface for users to query intersection states,
-list traffic lights, and send manual override commands.
 """
 
 import zmq
@@ -41,11 +39,11 @@ class MonitoringService:
         self.req_socket = self.context.socket(zmq.REQ)
 
     def connect(self):
-        """Connect to Analytics REP socket."""
+        """Conecta al socket REP de Analytics."""
         pc2_host = self.config.get("pc2_host", "localhost")
         addr = f"tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}"
         self.req_socket.connect(addr)
-        logger.info(f"Connected to Analytics at {addr}")
+        logger.info(f"Conectado a Analytics en {addr}")
 
     def send_request(self, request: MonitoringRequest) -> MonitoringResponse:
         """envia una solicitud y espera respuesta"""

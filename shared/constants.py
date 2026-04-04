@@ -1,20 +1,20 @@
 """
-constants.py - Naming conventions, states, and system-wide constants.
-Follows the grid notation defined in the project specification.
+constants.py - Convenciones de nomenclatura, estados y constantes de todo el sistema.
+Sigue la notación de cuadrícula definida en la especificación del proyecto.
 """
 
-# ─── Traffic Light States ───
+# ─── Estados de los semáforos ───
 VERDE = "VERDE"
 ROJO = "ROJO"
 LIGHT_STATES = [VERDE, ROJO]
 
-# ─── Traffic States ───
+# ─── Estados del tráfico ───
 NORMAL = "normal"
 CONGESTION = "congestion"
 PRIORIDAD = "prioridad"
 TRAFFIC_STATES = [NORMAL, CONGESTION, PRIORIDAD]
 
-# ─── Sensor Types ───
+# ─── Tipos de sensores ───
 SENSOR_ESPIRA = "espira"
 SENSOR_CAMARA = "camara"
 SENSOR_GPS = "gps"
@@ -25,24 +25,24 @@ SENSOR_PREFIXES = {
     SENSOR_GPS: "GPS",
 }
 
-# ─── Directions ───
+# ─── Direcciones ───
 NORTH = "N"
 SOUTH = "S"
 EAST = "E"
 WEST = "W"
 DIRECTIONS = [NORTH, SOUTH, EAST, WEST]
 
-# ─── Action Reasons ───
+# ─── Razones de acción ───
 REASON_CONGESTION = "congestion_detectada"
 REASON_PRIORITY = "prioridad"
 REASON_MANUAL = "manual"
 REASON_NORMAL = "normal"
 
-# ─── Action Origins ───
+# ─── Orígenes de acción ───
 ORIGIN_ANALYTICS = "analytics"
 ORIGIN_MONITORING = "monitoring"
 
-# ─── Command Types ───
+# ─── Tipos de comandos ───
 CMD_CONSULTA = "CONSULTA"
 CMD_OVERRIDE = "OVERRIDE"
 CMD_ESTADO_INTERSECCION = "ESTADO_INTERSECCION"
@@ -50,15 +50,15 @@ CMD_ESTADO_GENERAL = "ESTADO_GENERAL"
 CMD_LISTAR_SEMAFOROS = "LISTAR_SEMAFOROS"
 CMD_CAMBIO_LUZ = "CAMBIO_LUZ"
 
-# ─── DB Modes ───
+# ─── Modos de base de datos ───
 DB_MAIN = "main"
 DB_REPLICA = "replica"
 
-# ─── Replication ───
+# ─── Replicación ───
 SYNC_INSERT = "INSERT"
 SYNC_UPDATE = "UPDATE"
 
-# ─── ZMQ Topic Prefixes ───
+# ─── Prefijos de temas ZMQ ───
 TOPIC_SENSOR = "sensor"
 TOPIC_SEMAFORO = "semaforo"
 TOPIC_ALERTA = "alerta"
@@ -67,33 +67,33 @@ TOPIC_SYNC = "sync"
 
 
 def intersection_id(col: int, row: int) -> str:
-    """Generate intersection ID: INT_C{col}K{row}"""
+    """Genera el ID de la interseccion: INT_C{col}K{row}"""
     return f"INT_C{col}K{row}"
 
 
 def sensor_id(sensor_type: str, col: int, row: int) -> str:
-    """Generate sensor ID: {PREFIX}_C{col}K{row}"""
+    """Genera el ID del sensor: {PREFIX}_C{col}K{row}"""
     prefix = SENSOR_PREFIXES[sensor_type]
     return f"{prefix}_C{col}K{row}"
 
 
 def semaforo_id(col: int, row: int, direction: str) -> str:
-    """Generate traffic light ID: SEM_C{col}K{row}_{DIR}"""
+    """Genera el ID del semaforo: SEM_C{col}K{row}_{DIR}"""
     return f"SEM_C{col}K{row}_{direction}"
 
 
 def sensor_topic(sensor_type: str, col: int, row: int) -> str:
-    """Generate ZMQ topic: sensor/{type}/C{col}K{row}"""
+    """Genera el tema ZMQ: sensor/{type}/C{col}K{row}"""
     return f"{TOPIC_SENSOR}/{sensor_type}/C{col}K{row}"
 
 
 def semaforo_topic(col: int, row: int) -> str:
-    """Generate ZMQ topic for traffic light changes."""
+    """Genera el tema ZMQ para cambios en los semaforos."""
     return f"{TOPIC_SEMAFORO}/cambio/C{col}K{row}"
 
 
 def parse_intersection(int_id: str) -> tuple:
-    """Parse INT_C{col}K{row} → (col, row)"""
+    """Parsea INT_C{col}K{row} → (col, row)"""
     # INT_C5K3 → col=5, row=3
     parts = int_id.replace("INT_C", "").split("K")
     return int(parts[0]), int(parts[1])

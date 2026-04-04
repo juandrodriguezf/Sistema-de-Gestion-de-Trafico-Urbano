@@ -1,7 +1,7 @@
 """
-test_failover.py - Fault tolerance tests.
-Tests the heartbeat mechanism and failover from Main DB to Replica DB.
-Run with: python -m tests.test_failover (from project root)
+test_failover.py - Pruebas de tolerancia a fallos.
+Prueba el mecanismo de heartbeat y el failover de la base de datos principal a la base de datos réplica.
+Ejecutar con: python -m tests.test_failover (desde la raíz del proyecto)
 """
 
 import sys
@@ -18,7 +18,7 @@ class TestFailoverLogic(unittest.TestCase):
     """Test failover detection logic without ZMQ (unit-level)."""
 
     def test_timeout_detection(self):
-        """Simulate heartbeat timeout detection."""
+        """simula la deteccion de timeout del heartbeat."""
         heartbeat_timeout = 5  # seconds
         last_heartbeat = time.time() - 10  # 10 seconds ago
 
@@ -28,9 +28,9 @@ class TestFailoverLogic(unittest.TestCase):
         self.assertTrue(use_replica, "Failover should activate after timeout")
 
     def test_no_timeout(self):
-        """Heartbeat within threshold should NOT trigger failover."""
+        """Heartbeat dentro del umbral no deberia activar el failover."""
         heartbeat_timeout = 15
-        last_heartbeat = time.time() - 3  # 3 seconds ago
+        last_heartbeat = time.time() - 3  # hace 3 segundos
 
         elapsed = time.time() - last_heartbeat
         use_replica = elapsed > heartbeat_timeout
@@ -38,9 +38,9 @@ class TestFailoverLogic(unittest.TestCase):
         self.assertFalse(use_replica, "Failover should NOT activate before timeout")
 
     def test_recovery_detection(self):
-        """Simulate heartbeat recovery."""
-        use_replica = True  # Currently in failover mode
-        heartbeat_received = True  # Heartbeat restored
+        """Simula la recuperacion del heartbeat."""
+        use_replica = True  # actualmente en modo replica
+        heartbeat_received = True  # Heartbeat restaurado
 
         if heartbeat_received and use_replica:
             use_replica = False
@@ -51,27 +51,27 @@ class TestFailoverLogic(unittest.TestCase):
         """Test the flag toggle sequence: normal → failover → recovery."""
         use_replica = False
 
-        # Phase 1: Timeout
+        # Fase 1: Timeout
         timeout_detected = True
         if timeout_detected and not use_replica:
             use_replica = True
-        self.assertTrue(use_replica, "Phase 1: Should be in replica mode")
+        self.assertTrue(use_replica, "Fase 1: Deberia estar en modo replica")
 
-        # Phase 2: Still in failover (no heartbeat)
+        # Fase 2: Todavia en failover (sin heartbeat)
         heartbeat_received = False
         if heartbeat_received and use_replica:
             use_replica = False
-        self.assertTrue(use_replica, "Phase 2: Should still be in replica mode")
+        self.assertTrue(use_replica, "Fase 2: Deberia estar en modo replica")
 
-        # Phase 3: Recovery
+        # Fase 3: Recuperacion
         heartbeat_received = True
         if heartbeat_received and use_replica:
             use_replica = False
-        self.assertFalse(use_replica, "Phase 3: Should be back to main DB")
+        self.assertFalse(use_replica, "Fase 3: Deberia estar en modo replica")
 
 
 class TestReplicaDBIntegrity(unittest.TestCase):
-    """Test that replica DB maintains data integrity."""
+    """Test que la base de datos replica mantiene la integridad de los datos."""
 
     def setUp(self):
         from shared.db_utils import DatabaseManager
@@ -92,13 +92,13 @@ class TestReplicaDBIntegrity(unittest.TestCase):
                 os.remove(p)
 
     def test_both_dbs_have_same_structure(self):
-        """Both DBs should have the same number of intersections and sensors."""
+        """Ambas bases de datos deberian tener el mismo numero de intersecciones y sensores."""
         main_int = self.main_db.conn.execute("SELECT COUNT(*) as c FROM intersecciones").fetchone()["c"]
         replica_int = self.replica_db.conn.execute("SELECT COUNT(*) as c FROM intersecciones").fetchone()["c"]
         self.assertEqual(main_int, replica_int)
 
     def test_replica_accepts_writes_during_failover(self):
-        """During failover, replica DB should accept direct writes."""
+        """Durante el failover, la base de datos replica deberia aceptar escrituras directas."""
         self.replica_db.insert_event(
             "failover-evt-1", "ESP_C1K1", "INT_C1K1", "espira",
             {"vehiculos_por_minuto": 15}, "2026-01-01T00:00:00Z"
@@ -107,12 +107,12 @@ class TestReplicaDBIntegrity(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_sequence_tracking(self):
-        """Test that sequence numbers can be used for sync."""
+        """Test que los numeros de secuencia pueden ser usados para sincronizacion."""
         seq1 = 100
         seq2 = 200
 
-        # Simulate: main has seq up to 100, replica has up to 200
-        # Gap = records from 101 to 200 need to be synced to main
+        # Simula: main tiene seq hasta 100, replica tiene hasta 200
+        # Gap = registros del 101 al 200 necesitan ser sincronizados a main
         missing = list(range(seq1 + 1, seq2 + 1))
         self.assertEqual(len(missing), 100)
         self.assertEqual(missing[0], 101)

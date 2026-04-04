@@ -1,7 +1,7 @@
 """
-test_functional.py - Functional tests for the traffic management system.
-Tests sensor events, traffic rule evaluation, and message validation.
-Run with: python -m tests.test_functional (from project root)
+test_functional.py - Pruebas funcionales para el sistema de gestion de trafico.
+Prueba los eventos de los sensores, la evaluacion de reglas de trafico y la validacion de mensajes.
+Ejecutar con: python -m tests.test_functional (desde la raiz del proyecto)
 """
 
 import sys
@@ -22,7 +22,7 @@ from shared.db_utils import DatabaseManager
 
 
 class TestConstants(unittest.TestCase):
-    """Test naming convention generators."""
+    """test de convenciones de nombres"""
 
     def test_intersection_id(self):
         self.assertEqual(intersection_id(5, 3), "INT_C5K3")
@@ -43,7 +43,7 @@ class TestConstants(unittest.TestCase):
 
 
 class TestModels(unittest.TestCase):
-    """Test message model serialization."""
+    """test de serializacion de modelos de mensajes"""
 
     def test_sensor_event_serialization(self):
         event = SensorEvent(
@@ -81,7 +81,7 @@ class TestModels(unittest.TestCase):
 
 
 class TestValidation(unittest.TestCase):
-    """Test message validation logic."""
+    """test de validacion de mensajes"""
 
     def test_valid_espira_event(self):
         data = {
@@ -127,7 +127,7 @@ class TestValidation(unittest.TestCase):
             "tipo_sensor": "gps",
             "interseccion": "INT_C1K1",
             "timestamp": "2026-01-01T00:00:00Z",
-            "datos": {"densidad": 15.0},  # Missing velocidad_promedio
+            "datos": {"densidad": 15.0},  # no hay velocidad_promedio
         }
         valid, reason = validate_sensor_event(data)
         self.assertFalse(valid)
@@ -149,7 +149,7 @@ class TestValidation(unittest.TestCase):
     def test_prefix_mismatch(self):
         data = {
             "message_id": "test-id",
-            "sensor_id": "CAM_C1K1",  # Camera ID with espira type
+            "sensor_id": "CAM_C1K1",  # ID de camara con tipo de espira
             "tipo_sensor": "espira",
             "interseccion": "INT_C1K1",
             "timestamp": "2026-01-01T00:00:00Z",
@@ -198,14 +198,14 @@ class TestDatabase(unittest.TestCase):
     """Test database operations."""
 
     def setUp(self):
-        """Create a temporary test DB."""
+        """Crear una base de datos de prueba temporal."""
         self.db_path = os.path.join(os.path.dirname(__file__), "test_temp.db")
         self.db = DatabaseManager(self.db_path)
         self.db.connect()
         self.db.seed_all(2, 2, ["N", "S"])
 
     def tearDown(self):
-        """Clean up test DB."""
+        """Limpiar la base de datos de prueba."""
         self.db.close()
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
@@ -220,7 +220,7 @@ class TestDatabase(unittest.TestCase):
 
     def test_seed_semaforos(self):
         rows = self.db.conn.execute("SELECT COUNT(*) as cnt FROM semaforos").fetchone()
-        self.assertEqual(rows["cnt"], 8)  # 2x2x2 directions = 8
+        self.assertEqual(rows["cnt"], 8)  # 2x2x2 direcciones = 8
 
     def test_insert_event(self):
         self.db.insert_event("evt-1", "ESP_C1K1", "INT_C1K1", "espira",

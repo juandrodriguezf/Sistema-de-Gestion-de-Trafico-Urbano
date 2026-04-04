@@ -1,6 +1,6 @@
 """
-sensor_gps.py - GPS sensor.
-Measures: densidad (vehicles/km) and velocidad_promedio (average speed km/h).
+sensor_gps.py - sensor GPS.
+Mide: densidad (vehículos/km) y velocidad_promedio (velocidad promedio km/h).
 """
 
 import random
@@ -54,11 +54,11 @@ class SensorGPS(Sensor):
         Congestión = alta densidad + baja velocidad.
         """
         if random.random() < self.spike_prob:
-            # Congestión — alta densidad, baja velocidad
+            # congestión
             densidad = random.uniform(self.d_max * 0.5, self.d_max)
             velocidad = random.uniform(self.v_min, self.v_max * 0.4)
         else:
-            # Tráfico normal — baja densidad, velocidad más alta
+            # tráfico normal
             densidad = random.uniform(self.d_min, self.d_max * 0.4)
             velocidad = random.uniform(self.v_max * 0.5, self.v_max)
         return {

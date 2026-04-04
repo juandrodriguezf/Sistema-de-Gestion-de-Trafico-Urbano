@@ -1,6 +1,6 @@
 """
-models.py - Data classes and message builders for ZMQ communication.
-All messages follow JSON format with mandatory timestamp and source_id fields.
+models.py - clases de mensajes para la comunicacion ZMQ.
+Todos los mensajes siguen el formato JSON con campos obligatorios de timestamp y source_id.  
 """
 
 import json
@@ -21,16 +21,16 @@ def _uuid() -> str:
 
 
 # ═══════════════════════════════════════════
-# Sensor Event Messages (Sensor → Broker)
+# Mensajes de eventos de sensores (Sensor → Broker)
 # ═══════════════════════════════════════════
 
 @dataclass
 class SensorEvent:
-    """Message sent by a sensor to the Broker via PUB."""
+    """Mensaje enviado por un sensor al Broker via PUB."""
     sensor_id: str
     tipo_sensor: str          # espira | camara | gps
     interseccion: str         # INT_C5K3
-    datos: Dict[str, Any]     # sensor-specific payload
+    datos: Dict[str, Any]     # payload específico del sensor
     auth_token: str = ""
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
@@ -45,12 +45,12 @@ class SensorEvent:
 
 
 # ═══════════════════════════════════════════
-# Traffic Analysis Result (Analytics → DB)
+# Resultado del análisis de tráfico (Analytics → DB)
 # ═══════════════════════════════════════════
 
 @dataclass
 class TrafficState:
-    """Evaluation result for one intersection."""
+    """Resultado de la evaluación para una intersección."""
     interseccion: str
     estado: str               # normal | congestion
     metricas: Dict[str, float]
@@ -68,12 +68,12 @@ class TrafficState:
 
 
 # ═══════════════════════════════════════════
-# Traffic Light Command (Analytics → Lights)
+# Comando de semaforo (Analytics → Lights)
 # ═══════════════════════════════════════════
 
 @dataclass
 class LightAction:
-    """Command to change a traffic light state."""
+    """Comando para cambiar el estado de un semaforo."""
     semaforo_id: str
     nuevo_estado: str         # VERDE | ROJO
     razon: str                # congestion_detectada | prioridad | manual
@@ -92,12 +92,12 @@ class LightAction:
 
 
 # ═══════════════════════════════════════════
-# Monitoring Messages (Monitoring ↔ Analytics)
+# Mensajes de monitoreo (Monitoring ↔ Analytics)
 # ═══════════════════════════════════════════
 
 @dataclass
 class MonitoringRequest:
-    """Query or override command from Monitoring Service."""
+    """Consulta o comando de override del servicio de monitoreo."""
     tipo: str                 # CONSULTA | OVERRIDE
     consulta: str = ""        # ESTADO_INTERSECCION | ESTADO_GENERAL
     interseccion: str = ""
@@ -120,7 +120,7 @@ class MonitoringRequest:
 
 @dataclass
 class MonitoringResponse:
-    """Response from Analytics to Monitoring."""
+    """Respuesta del servicio de monitoreo."""
     tipo: str                 # RESPUESTA | ERROR
     datos: Dict[str, Any] = field(default_factory=dict)
     mensaje: str = ""
@@ -137,12 +137,12 @@ class MonitoringResponse:
 
 
 # ═══════════════════════════════════════════
-# DB Replication Message (Main DB → Replica DB)
+# Mensajes de replicación de base de datos (Main DB → Replica DB)
 # ═══════════════════════════════════════════
 
 @dataclass
 class ReplicationMessage:
-    """Sync message from Main DB to Replica DB."""
+    """Mensaje de sincronización de la base de datos principal a la base de datos réplica."""
     tabla: str
     operacion: str            # INSERT | UPDATE
     datos: Dict[str, Any] = field(default_factory=dict)
@@ -161,7 +161,7 @@ class ReplicationMessage:
 
 
 # ═══════════════════════════════════════════
-# Heartbeat Message
+# Mensaje de Heartbeat
 # ═══════════════════════════════════════════
 
 @dataclass

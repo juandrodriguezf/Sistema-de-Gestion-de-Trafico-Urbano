@@ -1,6 +1,6 @@
 """
-sensor_espira.py - Espira Inductiva (inductive loop) sensor.
-Measures: vehiculos_por_minuto (vehicle flow rate).
+sensor_espira.py - sensor de espira inductiva.
+Mide: vehiculos_por_minuto (flujo de vehículos).
 """
 
 import random
@@ -44,12 +44,12 @@ class SensorEspira(Sensor):
         self.spike_prob = (config or {}).get("congestion_spike_probability", 0.10)
 
     def generate_data(self) -> dict:
-        """Generate vehicle count data with occasional congestion spikes."""
+        """Genera datos de flujo vehicular con picos de congestión ocasionales."""
         if random.random() < self.spike_prob:
-            # Congestion spike — high vehicle count
+            # congestión
             value = random.uniform(self.max_val * 0.7, self.max_val)
         else:
-            # Normal traffic
+            # tráfico normal
             value = random.uniform(self.min_val, self.max_val * 0.6)
         return {"vehiculos_por_minuto": round(value, 1)}
 

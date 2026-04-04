@@ -1,7 +1,6 @@
 """
 broker.py - ZeroMQ XPUB/XSUB Proxy Broker.
-Acts as a message forwarder between sensor publishers (PC1) and
-subscriber services (PC2 Analytics).
+Actua como un puente entre los sensores (PC1) y los servicios suscriptores (PC2 Analytics).
 """
 
 import zmq
@@ -18,13 +17,13 @@ logger = logging.getLogger("BrokerZMQ")
 
 class BrokerZMQ:
     """
-    ZeroMQ Proxy Broker using XPUB/XSUB pattern.
+    proxy broker usando XPUB/XSUB pattern.
     
-    Frontend (XSUB): Sensors connect here with PUB sockets.
-    Backend (XPUB): Subscribers (Analytics) connect here with SUB sockets.
+    Frontend (XSUB): Sensores se conectan aquí con sockets PUB.
+    Backend (XPUB): Suscriptores (Analytics) se conectan aquí con sockets SUB.
     
-    The proxy transparently forwards all messages from publishers to subscribers.
-    Design allows future replacement with a threaded broker for the 2nd delivery.
+    El proxy reenvía transparentemente todos los mensajes de los publicadores a los suscriptores.
+    El diseño permite el reemplazo futuro con un broker en hilos para la 2da entrega.
     """
 
     def __init__(self, frontend_port: int = 5555, backend_port: int = 5556,
@@ -40,7 +39,9 @@ class BrokerZMQ:
         self.backend = self.context.socket(zmq.XPUB)
 
     def start(self):
-        """Bind sockets and start the proxy."""
+        """
+        empieza el proxy
+        """
         frontend_addr = f"tcp://{self.bind_address}:{self.frontend_port}"
         backend_addr = f"tcp://{self.bind_address}:{self.backend_port}"
 
@@ -48,13 +49,13 @@ class BrokerZMQ:
         self.backend.bind(backend_addr)
 
         logger.info(f"Broker iniciado")
-        logger.info(f"  Frontend (XSUB - sensors connect here):   {frontend_addr}")
-        logger.info(f"  Backend  (XPUB - analytics connects here): {backend_addr}")
+        logger.info(f"  Frontend (XSUB - sensores):   {frontend_addr}")
+        logger.info(f"  Backend  (XPUB - analytics): {backend_addr}")
         logger.info(f"  Reenviando mensajes...")
 
         try:
-            # zmq.proxy is a built-in message forwarder
-            # It blocks and forwards messages between frontend and backend
+            # zmq.proxy es un forwarder de mensajes incorporado
+            # Bloquea y reenvía mensajes entre frontend y backend
             zmq.proxy(self.frontend, self.backend)
         except KeyboardInterrupt:
             logger.info("Broker detenido por el usuario")
@@ -62,7 +63,7 @@ class BrokerZMQ:
             self.stop()
 
     def stop(self):
-        """Clean up resources."""
+        """apaga el broker"""
         self.frontend.close()
         self.backend.close()
         self.context.term()

@@ -1,6 +1,6 @@
 """
-sensor.py - Abstract base sensor process.
-Each sensor is an independent process that publishes events to the BrokerZMQ.
+sensor.py - sensor base abstracto.
+Cada sensor es un proceso independiente que publica eventos al BrokerZMQ.
 """
 
 import zmq
@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 class Sensor(ABC):
     """
-    Abstract base class for all sensors.
-    Each sensor runs as an independent process, generating data and
-    publishing it to the BrokerZMQ via a ZMQ PUB socket.
+    Clase base abstracta para todos los sensores.
+    Cada sensor es un proceso independiente que genera datos y
+    los publica al BrokerZMQ a través de un socket ZMQ PUB.
     """
 
     def __init__(self, sensor_id: str, tipo_sensor: str, col: int, row: int,
@@ -54,20 +54,20 @@ class Sensor(ABC):
         addr = f"tcp://{self.broker_host}:{self.broker_port}"
         self.socket.connect(addr)
         logger.info(f"[{self.sensor_id}] Conectado al broker en {addr}")
-        # Allow time for connection to establish
+        # permite que el broker se conecte
         time.sleep(0.5)
 
     @abstractmethod
     def generate_data(self) -> dict:
         """
-        Generate sensor-specific data.
-        Must be implemented by each sensor subclass.
-        Returns a dict with the sensor payload.
+        Genera datos específicos del sensor.
+        Debe ser implementado por cada subclase de sensor.
+        Retorna un diccionario con el payload del sensor.
         """
         pass
 
     def create_event(self) -> SensorEvent:
-        """Create a SensorEvent with generated data."""
+        """Crea un SensorEvent con los datos generados."""
         datos = self.generate_data()
         return SensorEvent(
             sensor_id=self.sensor_id,
@@ -78,16 +78,16 @@ class Sensor(ABC):
         )
 
     def publish(self, event: SensorEvent):
-        """Publish event to ZMQ with topic prefix."""
+        """Publica el evento al broker con el prefijo del topic."""
         topic = self.topic
         payload = event.to_json()
-        # ZMQ PUB sends topic + space + payload
+        # ZMQPUB envía topic + espacio + payload
         message = f"{topic} {payload}"
         self.socket.send_string(message)
         logger.debug(f"[{self.sensor_id}] Publicado: {topic}")
 
     def run(self):
-        """Main sensor loop — generate and publish events periodically."""
+        """Bucle principal del sensor — genera y publica eventos periódicamente."""
         self.connect()
         self.running = True
         logger.info(f"[{self.sensor_id}] Iniciando sensor (freq={self.frequency}s)")
@@ -103,7 +103,7 @@ class Sensor(ABC):
             self.stop()
 
     def stop(self):
-        """Clean up resources."""
+        """libera recursos"""
         self.running = False
         self.socket.close()
         self.context.term()

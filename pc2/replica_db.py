@@ -1,5 +1,5 @@
 """
-replica_db.py - Replica Database Manager para PC2.
+replica_db.py - manager de base de datos replica para PC2.
 Se suscribe a los mensajes de replicación desde Main DB (PC3) y
 mantiene una copia sincronizada. Durante la falla de PC3, acepta
 escrituras directas desde Analytics Service.
@@ -37,7 +37,7 @@ class ReplicaDBService:
         self.running = False
         self.last_sequence = 0
 
-        # Database
+        # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "replica_traffic.db")
         self.db = DatabaseManager(db_path)
 
@@ -88,7 +88,7 @@ class ReplicaDBService:
                 )
 
             self.last_sequence = rep_msg.sequence_number
-            logger.debug(f"Replicated: {tabla}/{operacion} seq={rep_msg.sequence_number}")
+            logger.debug(f"Replicado: {tabla}/{operacion} seq={rep_msg.sequence_number}")
 
         except Exception as e:
             logger.error(f"Error al replicar en {rep_msg.tabla}: {e}")
@@ -97,13 +97,13 @@ class ReplicaDBService:
         """Inicia el servicio de base de datos réplica."""
         pc3_host = self.config.get("pc3_host", "localhost")
 
-        # SUB socket: receive replication from Main DB
+        # SUB socket: recibe la replicacion desde la base de datos principal
         sub_socket = self.context.socket(zmq.SUB)
         sub_socket.connect(f"tcp://{pc3_host}:{self.ports['db_replication']}")
         sub_socket.setsockopt_string(zmq.SUBSCRIBE, TOPIC_SYNC)
         logger.info(f"se suscribio a la replicacion en tcp://{pc3_host}:{self.ports['db_replication']}")
 
-        # Initialize DB
+        # Inicializa la base de datos
         self.db.connect()
         self.db.seed_all(
             self.grid["columns"], self.grid["rows"],
@@ -126,7 +126,7 @@ class ReplicaDBService:
                             self.apply_replication(msg)
                             rep_count += 1
                             if rep_count % 50 == 0:
-                                logger.info(f"Replicated {rep_count} records (last_seq={self.last_sequence})")
+                                logger.info(f"Replicado {rep_count} registros (last_seq={self.last_sequence})")
                         except Exception as e:
                             logger.error(f"Error al procesar la replicacion: {e}")
         except KeyboardInterrupt:

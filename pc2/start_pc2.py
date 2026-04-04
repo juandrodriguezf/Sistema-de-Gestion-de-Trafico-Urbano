@@ -1,5 +1,5 @@
 """
-start_pc2.py - Launcher for all PC2 services.
+start_pc2.py - Lanzador para todos los servicios de PC2.
 Inicia Analytics Service, Traffic Light Controller, and Replica DB.
 """
 
@@ -30,7 +30,7 @@ def main():
 
     processes = []
 
-    # 1. Start Replica DB Service
+    # 1. Inicia el servicio de base de datos réplica
     logger.info("Iniciando servicio de base de datos replica...")
     proc = subprocess.Popen(
         [python, os.path.join(pc2_dir, "replica_db.py")],
@@ -39,7 +39,7 @@ def main():
     processes.append(("ReplicaDB", proc))
     time.sleep(1)
 
-    # 2. Start Traffic Light Controller
+    # 2. Inicia el controlador de semaforos
     logger.info("Iniciando controlador de semaforos...")
     proc = subprocess.Popen(
         [python, os.path.join(pc2_dir, "traffic_light_controller.py")],
@@ -48,7 +48,7 @@ def main():
     processes.append(("TrafficLightController", proc))
     time.sleep(1)
 
-    # 3. Start Analytics Service
+    # 3. Inicia el servicio de analitica
     logger.info("Iniciando servicio de analitica...")
     proc = subprocess.Popen(
         [python, os.path.join(pc2_dir, "analytics_service.py")],

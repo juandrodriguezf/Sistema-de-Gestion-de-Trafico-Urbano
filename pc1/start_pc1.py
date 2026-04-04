@@ -18,7 +18,7 @@ logger = logging.getLogger("PC1-Launcher")
 
 
 def main():
-    # Load config
+    # Carga la configuración
     config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
     with open(config_path) as f:
         config = json.load(f)
@@ -34,7 +34,7 @@ def main():
 
     processes = []
 
-    # 1. Start Broker
+    # 1. Inicia el broker
     logger.info("Iniciando broker...")
     broker_proc = subprocess.Popen(
         [python, os.path.join(pc1_dir, "broker.py")],
@@ -43,7 +43,7 @@ def main():
     processes.append(("BrokerZMQ", broker_proc))
     time.sleep(1)  # Give broker time to bind
 
-    # 2. Start Sensors (3 por interseccion)
+    # 2. Inicia los sensores (3 por interseccion)
     sensor_scripts = {
         "espira": os.path.join(pc1_dir, "sensor_espira.py"),
         "camara": os.path.join(pc1_dir, "sensor_camara.py"),
@@ -65,7 +65,7 @@ def main():
     logger.info(f"PC1 iniciado: 1 Broker + {total_sensors} sensores ({cols}x{rows} grid, 3 por interseccion)")
     logger.info("Presiona Ctrl+C para apagar todos los procesos")
 
-    # Wait for interrupt
+    # Espera la interrupción
     try:
         for name, proc in processes:
             proc.wait()

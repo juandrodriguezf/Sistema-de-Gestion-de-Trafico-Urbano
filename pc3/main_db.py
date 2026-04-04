@@ -1,5 +1,5 @@
 """
-main_db.py - Main Database Service for PC3.
+main_db.py - Servicio de base de datos principal para PC3.
 Recibe datos de estado de tráfico desde Analytics (PULL), los persiste,
 envía heartbeat y publica mensajes de replicación a la base de datos réplica.
 """
@@ -26,7 +26,7 @@ logger = logging.getLogger("MainDB")
 
 class MainDBService:
     """
-    Main Database Service (PC3).
+    Servicio de base de datos principal (PC3).
     
     - recibe datos de estado de tráfico desde Analytics (PULL)
     - almacena todos los eventos y estados en SQLite
@@ -92,7 +92,7 @@ class MainDBService:
             int_id = state.interseccion
             metrics = state.metricas
 
-            # Store event in DB
+            # Almacena el evento en la base de datos
             event_id = str(uuid.uuid4())
             self.db.insert_event(
                 evento_id=event_id,
@@ -103,7 +103,7 @@ class MainDBService:
                 timestamp=state.timestamp,
             )
 
-            # Store traffic state
+            # Almacena el estado del trafico
             self.db.insert_traffic_state(
                 interseccion_id=int_id,
                 Q=metrics.get("Q", 0),
@@ -114,7 +114,7 @@ class MainDBService:
                 timestamp=state.timestamp,
             )
 
-            # Publish replication for event
+            # Publica la replicacion del evento
             self.publish_replication(rep_pub, "eventos", "INSERT", {
                 "evento_id": event_id,
                 "sensor_id": "analytics",
@@ -124,7 +124,7 @@ class MainDBService:
                 "timestamp": state.timestamp,
             })
 
-            # Publish replication for traffic state
+            # Publica la replicacion del estado del trafico
             self.publish_replication(rep_pub, "estado_trafico", "INSERT", {
                 "interseccion_id": int_id,
                 "Q": metrics.get("Q", 0),
@@ -135,7 +135,7 @@ class MainDBService:
                 "timestamp": state.timestamp,
             })
 
-            # If action was taken, store and replicate it
+            # Si se tomo una accion, se almacena y se replica
             if state.accion_tomada:
                 accion = state.accion_tomada
                 accion_id = str(uuid.uuid4())
@@ -173,15 +173,15 @@ class MainDBService:
             logger.error(f"error al procesar el registro: {e}")
 
     def run(self):
-        """Start the Main DB Service."""
+        """Inicia el servicio de base de datos principal."""
         pc3_host = self.config.get("pc3_host", "localhost")
 
-        # PULL socket: receive data from Analytics
+        # PULL socket: recibe datos desde Analytics
         pull_socket = self.context.socket(zmq.PULL)
         pull_socket.bind(f"tcp://{pc3_host}:{self.ports['analytics_to_db']}")
         logger.info(f"PULL bound at tcp://{pc3_host}:{self.ports['analytics_to_db']}")
 
-        # PUB socket: replication to Replica DB
+        # PUB socket: replicacion a la base de datos replica
         rep_pub = self.context.socket(zmq.PUB)
         rep_pub.bind(f"tcp://{pc3_host}:{self.ports['db_replication']}")
         logger.info(f"Replication PUB bound at tcp://{pc3_host}:{self.ports['db_replication']}")
