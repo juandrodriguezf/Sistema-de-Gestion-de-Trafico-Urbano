@@ -168,3 +168,7 @@ A -[#FBBC05]> M: PUSH datos → Main DB
 
 @enduml
 ```
+
+
+## Vista Previa
+![Diagrama](diagrama_secuencia.png)

@@ -74,3 +74,7 @@ endlegend
 
 @enduml
 ```
+
+
+## Vista Previa
+![Diagrama](diagrama_despliegue.png)

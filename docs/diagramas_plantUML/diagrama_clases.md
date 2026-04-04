@@ -219,3 +219,7 @@ MonitoringService ..> AnalyticsService : REQ/REP
 
 @enduml
 ```
+
+
+## Vista Previa
+![Diagrama](diagrama_clases.png)

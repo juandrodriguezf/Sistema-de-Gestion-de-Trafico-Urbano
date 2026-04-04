@@ -76,3 +76,7 @@ HBM -[#FBBC05]-> ANA : Heartbeat
 
 @enduml
 ```
+
+
+## Vista Previa
+![Diagrama](diagrama_componentes.png)
