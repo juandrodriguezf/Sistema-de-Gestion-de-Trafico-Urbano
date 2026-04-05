@@ -162,6 +162,9 @@ class MonitoringService:
                 else:
                     print("  Comando no reconocido. Use 1-5.")
 
+            except EOFError:
+                print("\nCerrando monitoreo (EOF)...")
+                break
             except KeyboardInterrupt:
                 print("\nCerrando monitoreo...")
                 break

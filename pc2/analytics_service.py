@@ -26,7 +26,7 @@ from shared.constants import (
     SENSOR_ESPIRA, SENSOR_CAMARA, SENSOR_GPS,
     REASON_CONGESTION, REASON_NORMAL, REASON_PRIORITY,
     ORIGIN_ANALYTICS, ORIGIN_MONITORING,
-    CMD_CONSULTA, CMD_OVERRIDE,
+    CMD_CONSULTA, CMD_OVERRIDE, CMD_LISTAR_SEMAFOROS,
     TOPIC_SENSOR, TOPIC_HEARTBEAT,
 )
 from shared.validation import validate_sensor_event, validate_override_command, validate_query
@@ -191,8 +191,12 @@ class AnalyticsService:
         )
 
         # 6. Push a la BD
-        db_msg = traffic_state.to_json()
-        push_socket.send_string(db_msg)
+        if not self.use_replica:
+            try:
+                db_msg = traffic_state.to_json()
+                push_socket.send_string(db_msg, flags=zmq.NOBLOCK)
+            except zmq.error.Again:
+                logger.debug("Socket PUSH lleno o no disponible. Mensaje descartado.")
 
         # 7. También almacena el evento en la BD réplica si está en modo de failover
         if self.use_replica:
@@ -265,14 +269,14 @@ class AnalyticsService:
                     mensaje=f"Estado general: {len(summary)} intersecciones",
                 )
 
-            elif consulta == "LISTAR_SEMAFOROS":
-                if self.use_replica:
-                    sems = self.replica_db.get_all_semaforos()
-                    return MonitoringResponse(tipo="RESPUESTA", datos={"semaforos": sems})
+            elif consulta == CMD_LISTAR_SEMAFOROS:
+                #se retorna los semaforos desde la bd replica
+                sems = self.replica_db.get_all_semaforos()
+                mode_str = "replica" if self.use_replica else "main"
                 return MonitoringResponse(
                     tipo="RESPUESTA",
-                    mensaje="Lista de semáforos disponible solo desde la BD",
-                    datos={"mode": "replica" if self.use_replica else "main"},
+                    datos={"semaforos": sems, "db_mode": mode_str},
+                    mensaje=f"Lista de {len(sems)} semáforos (Modo: {mode_str})"
                 )
 
         elif tipo == CMD_OVERRIDE:
@@ -284,11 +288,11 @@ class AnalyticsService:
             nuevo_estado = data["nuevo_estado"]
             motivo = data.get("motivo", "manual")
 
-            logger.info(f"OVERRIDE: {sem_id} → {nuevo_estado} (motivo: {motivo})")
+            logger.info(f"OVERRIDE: {sem_id} -> {nuevo_estado} (motivo: {motivo})")
             return MonitoringResponse(
                 tipo="RESPUESTA",
                 datos={"semaforo_id": sem_id, "nuevo_estado": nuevo_estado, "ejecutado": True},
-                mensaje=f"Override ejecutado: {sem_id} → {nuevo_estado}",
+                mensaje=f"Override ejecutado: {sem_id} -> {nuevo_estado}",
             )
 
         return MonitoringResponse(tipo="ERROR", mensaje=f"Tipo de solicitud desconocido: {tipo}")
