@@ -41,7 +41,7 @@ def main():
         cwd=os.path.join(pc1_dir, ".."),
     )
     processes.append(("BrokerZMQ", broker_proc))
-    time.sleep(1)  # Give broker time to bind
+    time.sleep(1)  # Da tiempo al broker para conectarse
 
     # 2. Inicia los sensores (3 por interseccion)
     sensor_scripts = {

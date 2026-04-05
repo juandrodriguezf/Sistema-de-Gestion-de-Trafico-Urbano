@@ -1,6 +1,6 @@
 """
 start_pc2.py - Lanzador para todos los servicios de PC2.
-Inicia Analytics Service, Traffic Light Controller, and Replica DB.
+Inicia Analytics Service, Traffic Light Controller, y Replica DB.
 """
 
 import subprocess

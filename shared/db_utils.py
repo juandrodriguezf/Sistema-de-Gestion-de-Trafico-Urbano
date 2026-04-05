@@ -145,10 +145,10 @@ class DatabaseManager:
                     )
                     count += 1
         self.conn.commit()
-        logger.info(f"Seeded {count} traffic lights")
+        logger.info(f"Seeded {count} semaforos")
 
     def seed_all(self, columns: int, rows: int, directions: List[str]):
-        """Seed all static data."""
+        """todas las seed"""
         self.seed_intersections(columns, rows)
         self.seed_sensors(columns, rows)
         self.seed_semaforos(columns, rows, directions)

@@ -13,7 +13,7 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
-# Add project root to path
+# Agrega la ruta raíz del proyecto al path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.models import SensorEvent
@@ -50,7 +50,7 @@ class Sensor(ABC):
         self.topic = sensor_topic(tipo_sensor, col, row)
 
     def connect(self):
-        """Connect to the BrokerZMQ frontend."""
+        """Conectarse al frontend del BrokerZMQ."""
         addr = f"tcp://{self.broker_host}:{self.broker_port}"
         self.socket.connect(addr)
         logger.info(f"[{self.sensor_id}] Conectado al broker en {addr}")

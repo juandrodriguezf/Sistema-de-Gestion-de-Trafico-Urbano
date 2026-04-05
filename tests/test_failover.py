@@ -19,13 +19,13 @@ class TestFailoverLogic(unittest.TestCase):
 
     def test_timeout_detection(self):
         """simula la deteccion de timeout del heartbeat."""
-        heartbeat_timeout = 5  # seconds
-        last_heartbeat = time.time() - 10  # 10 seconds ago
+        heartbeat_timeout = 5  # segundos
+        last_heartbeat = time.time() - 10  # hace 10 segundos
 
         elapsed = time.time() - last_heartbeat
         use_replica = elapsed > heartbeat_timeout
 
-        self.assertTrue(use_replica, "Failover should activate after timeout")
+        self.assertTrue(use_replica, "Failover deberia activarse despues del timeout")
 
     def test_no_timeout(self):
         """Heartbeat dentro del umbral no deberia activar el failover."""
@@ -35,7 +35,7 @@ class TestFailoverLogic(unittest.TestCase):
         elapsed = time.time() - last_heartbeat
         use_replica = elapsed > heartbeat_timeout
 
-        self.assertFalse(use_replica, "Failover should NOT activate before timeout")
+        self.assertFalse(use_replica, "Failover no deberia activarse antes del timeout")
 
     def test_recovery_detection(self):
         """Simula la recuperacion del heartbeat."""
@@ -45,10 +45,10 @@ class TestFailoverLogic(unittest.TestCase):
         if heartbeat_received and use_replica:
             use_replica = False
 
-        self.assertFalse(use_replica, "Should switch back to main DB on recovery")
+        self.assertFalse(use_replica, "Deberia volver a la base de datos principal en recuperacion")
 
     def test_failover_flag_toggle(self):
-        """Test the flag toggle sequence: normal → failover → recovery."""
+        """prueba el cambio de flag de failover."""
         use_replica = False
 
         # Fase 1: Timeout

@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 
 
 def _now() -> str:
-    """ISO 8601 timestamp in UTC."""
+    """timestamp ISO 8601 en UTC."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 

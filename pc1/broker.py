@@ -33,9 +33,9 @@ class BrokerZMQ:
         self.bind_address = bind_address
 
         self.context = zmq.Context()
-        # XSUB receives from publishers (sensors)
+        # XSUB recibe de los publicadores (sensores)
         self.frontend = self.context.socket(zmq.XSUB)
-        # XPUB sends to subscribers (analytics)
+        # XPUB envía a los suscriptores (analytics)
         self.backend = self.context.socket(zmq.XPUB)
 
     def start(self):

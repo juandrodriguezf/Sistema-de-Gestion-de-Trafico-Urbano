@@ -42,7 +42,7 @@ class MainDBService:
         self.running = False
         self.sequence_number = 0
 
-        # Database
+        # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "main_traffic.db")
         self.db = DatabaseManager(db_path)
 

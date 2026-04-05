@@ -1,5 +1,6 @@
 # Informe Primera Entrega — Gestión Inteligente de Tráfico Urbano
 
+**Integrantes**: Juan Rodriguez, Nicolas Joya y Camila Beltran
 **Asignatura:** Sistemas Distribuidos  
 **Universidad:** Pontificia Universidad Javeriana  
 **Semestre:** 2026-10  
