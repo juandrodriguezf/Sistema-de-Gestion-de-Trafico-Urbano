@@ -138,8 +138,6 @@ entrega1_proyecto/
 ## Documentación
 
 - [Informe de Primera Entrega](docs/informe_entrega1.md)
-- Fuentes PlantUML (texto): carpeta `docs/diagramas_plantUML/*.md` — si las editas, regenera los `.png` con PlantUML.
-
 - [Diagrama de Despliegue](docs/diagramas_plantUML/diagrama_despliegue.png)
 - [Diagrama de Componentes](docs/diagramas_plantUML/diagrama_componentes.png)
 - [Diagrama de Clases](docs/diagramas_plantUML/diagrama_clases.png)
