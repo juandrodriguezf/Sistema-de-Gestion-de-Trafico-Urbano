@@ -79,6 +79,7 @@ class LightAction:
     razon: str                # congestion_detectada | prioridad | manual
     comando: str = "CAMBIO_LUZ"
     prioridad: bool = False
+    origen: str = "analytics"  # analytics | monitoring
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
 
@@ -88,6 +89,8 @@ class LightAction:
     @classmethod
     def from_json(cls, raw: str) -> "LightAction":
         d = json.loads(raw)
+        if "origen" not in d:
+            d["origen"] = "analytics"
         return cls(**d)
 
 

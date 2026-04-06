@@ -239,12 +239,29 @@ class DatabaseManager:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_all_semaforos(self) -> List[Dict[str, Any]]:
-        """Obtiene el estado de todos los semaforos."""
-        rows = self.conn.execute(
-            "SELECT semaforo_id, interseccion_id, direccion, estado_actual FROM semaforos ORDER BY semaforo_id"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    def get_all_semaforos(self, columns: int = None, rows: int = None) -> List[Dict[str, Any]]:
+        """Obtiene el estado de todos los semaforos.
+        Si se proporcionan columns y rows, filtra solo los semáforos de esa grilla.
+        """
+        query = "SELECT semaforo_id, interseccion_id, direccion, estado_actual FROM semaforos"
+        params = []
+        
+        # Si se proporciona información de grilla, filtra solo los semáforos válidos
+        if columns and rows:
+            # Construye una lista de intersecciones válidas basada en la grilla
+            valid_intersections = []
+            for c in range(1, columns + 1):
+                for r in range(1, rows + 1):
+                    valid_intersections.append(f"INT_C{c}K{r}")
+            
+            if valid_intersections:
+                placeholders = ",".join(["?" for _ in valid_intersections])
+                query += f" WHERE interseccion_id IN ({placeholders})"
+                params = valid_intersections
+        
+        query += " ORDER BY semaforo_id"
+        rows_data = self.conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows_data]
 
     def is_sensor_registered(self, sensor_id: str) -> bool:
         """Verifica si un sensor está registrado y activo."""

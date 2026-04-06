@@ -120,9 +120,9 @@ El sistema utiliza 6 tablas SQLite:
 
 ### 4.2 Protocolo de Replicación
 
-- **Normal**: Main DB publica cada escritura vía PUB (port 5560). Replica DB suscribe y aplica.
-- **Failover**: Si PC3 falla, Analytics escribe directamente en Replica DB.
-- **Recuperación**: Replica DB envía datos faltantes a Main DB al recuperarse (basado en `sequence_number`).
+- **Normal**: Main DB publica cada escritura vía PUB (puerto 5560). Replica DB suscribe y aplica.
+- **Failover**: Si PC3 falla, Analytics deja de hacer PUSH a Main DB y **escribe directamente** en la SQLite réplica en PC2 (`DatabaseManager` local), no por un socket PUSH dedicado.
+- **Recuperación**: Al volver el heartbeat de PC3, Analytics vuelve a modo Main (`use_replica = False`). **No** está implementado un protocolo automático de “backfill” desde Réplica → Main ni reconciliación por `sequence_number`; las réplicas pueden divergir hasta intervención manual o diseño futuro.
 
 ---
 
@@ -173,17 +173,16 @@ Donde:
 
 1. Analytics detecta timeout del heartbeat
 2. Activa flag `use_replica = True`
-3. Redirige escrituras PUSH a Replica DB (PC2)
-4. Monitoring queries se sirven desde Replica DB
-5. El sistema continúa operando transparentemente
+3. Deja de enviar `TrafficState` por PUSH a Main DB; persiste eventos/estados (y overrides) vía **API SQLite** sobre la réplica en PC2
+4. La lista de semáforos en monitoreo sigue leyendo la BD réplica (coherente con el diseño actual)
+5. El sistema continúa operando; la transparencia completa frente a histórico en Main depende de no haber pérdida en el intervalo de caída
 
 ### 6.3 Protocolo de Recuperación
 
-1. PC3 vuelve en línea, reanuda heartbeat
-2. Analytics detecta heartbeat restaurado
-3. Replica DB envía datos acumulados durante la falla a Main DB
-4. Re-sincronización basada en `sequence_number`
-5. `use_replica = False`, operación normal restaurada
+1. PC3 vuelve en línea y reanuda heartbeat y Main DB
+2. Analytics detecta heartbeat restaurado y pone `use_replica = False`
+3. Las nuevas escrituras vuelven al PUSH hacia Main DB
+4. **No** hay en el código actual un paso automático que copie a Main DB todo lo escrito solo en réplica durante la caída; conviene asumir posible divergencia hasta una mejora explícita de sincronización
 
 ### 6.4 Diagrama de Secuencia del Failover
 
@@ -205,13 +204,15 @@ Ver: [Diagrama de Secuencia](./diagramas_plantUML/diagrama_secuencia.png) — Fl
 
 - **Validación de esquema**: Verificación de campos obligatorios y tipos
 - **Validación de identidad**: `sensor_id` debe existir en registro de sensores activos
-- **Validación de token**: Cada sensor tiene un `auth_token` único
+- **Validación de token (sensores)**: Los eventos llevan `auth_token`; la validación estricta por token en Analytics puede ampliarse (hoy el registro en cuadrícula y prefijos son el filtro principal)
 - **Validación de rango**: Datos fuera de rango físico son rechazados (ej: velocidad negativa)
 - **Control de acceso**: Solo Monitoring Service puede enviar overrides
 
 ---
 
 ## 8. Diagramas UML
+
+Las fuentes editables están en `docs/diagramas_plantUML/*.md` (bloques `plantuml`). Los `.png` son vistas exportadas: si cambias el texto UML, **vuelve a generar los PNG** con tu herramienta PlantUML para que coincidan con el código.
 
 | Diagrama | Archivo | Notación |
 |----------|---------|----------|
@@ -259,8 +260,7 @@ python pc2/start_pc2.py
 python pc1/start_pc1.py
 
 # 5. Ejecutar tests
-python -m tests.test_functional
-python -m tests.test_failover
+python -m pytest tests/ -q
 ```
 
 ---
@@ -272,7 +272,7 @@ python -m tests.test_failover
 - **ZeroMQ** como middleware de comunicación por su ligereza y soporte de múltiples patrones
 - **SQLite** para persistencia por su simplicidad y replicabilidad
 - **Procesos independientes** para sensores, garantizando aislamiento de fallos
-- **Heartbeat + failover automático** para tolerancia a fallos transparente
+- **Heartbeat + failover automático** para tolerancia a fallos (lectura/escritura en réplica; recuperación sin backfill automático hacia Main)
 - **Configuración centralizada** en `config.json` para flexibilidad
 
 ### 10.2 Preparación para Segunda Entrega

@@ -78,6 +78,12 @@ class TestModels(unittest.TestCase):
         parsed = LightAction.from_json(json_str)
         self.assertEqual(parsed.semaforo_id, "SEM_C3K2_N")
         self.assertEqual(parsed.nuevo_estado, "VERDE")
+        self.assertEqual(parsed.origen, "analytics")
+
+    def test_light_action_from_json_sin_origen_usa_default(self):
+        raw = '{"semaforo_id": "SEM_C1K1_N", "nuevo_estado": "ROJO", "razon": "manual", "comando": "CAMBIO_LUZ", "prioridad": false, "message_id": "x", "timestamp": "2026-01-01T00:00:00Z"}'
+        parsed = LightAction.from_json(raw)
+        self.assertEqual(parsed.origen, "analytics")
 
 
 class TestValidation(unittest.TestCase):

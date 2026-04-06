@@ -3,6 +3,9 @@ constants.py - Convenciones de nomenclatura, estados y constantes de todo el sis
 Sigue la notación de cuadrícula definida en la especificación del proyecto.
 """
 
+import re
+from typing import Optional, Tuple
+
 # ─── Estados de los semáforos ───
 VERDE = "VERDE"
 ROJO = "ROJO"
@@ -97,3 +100,14 @@ def parse_intersection(int_id: str) -> tuple:
     # INT_C5K3 → col=5, row=3
     parts = int_id.replace("INT_C", "").split("K")
     return int(parts[0]), int(parts[1])
+
+
+def parse_semaforo_id(sem_id: str) -> Optional[Tuple[int, int, str]]:
+    """
+    Parsea SEM_C{col}K{row}_{DIR} → (col, row, direccion).
+    Retorna None si el formato no es válido.
+    """
+    m = re.match(r"^SEM_C(\d+)K(\d+)_([NSEW])$", sem_id)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), m.group(3)

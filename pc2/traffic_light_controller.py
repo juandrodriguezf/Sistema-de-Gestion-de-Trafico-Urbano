@@ -71,7 +71,7 @@ class TrafficLightController:
         self.light_states[semaforo_id] = nuevo_estado
         now = datetime.now(timezone.utc).isoformat()
 
-        logger.info(f"Light changed: {semaforo_id} {estado_anterior} → {nuevo_estado} ({razon})")
+        logger.info(f"luz cambio en : {semaforo_id} {estado_anterior} → {nuevo_estado} ({razon})")
 
         # Persistencia en la base de datos
         try:
@@ -122,7 +122,7 @@ class TrafficLightController:
                                 action.semaforo_id,
                                 action.nuevo_estado,
                                 action.razon,
-                                "analytics",
+                                action.origen,
                             )
                             change_count += 1
                         except Exception as e:

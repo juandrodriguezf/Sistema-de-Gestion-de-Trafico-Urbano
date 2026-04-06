@@ -1,6 +1,6 @@
 {
     "grid": {
-        "columns": 2,
+        "columns": 1,
         "rows": 2
     },
     "sensor_frequency_seconds": 5,

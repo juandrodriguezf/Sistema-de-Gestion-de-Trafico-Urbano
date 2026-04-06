@@ -17,7 +17,7 @@ PC1 (Sensores)          PC2 (Analítica)           PC3 (Monitoreo)
 
 ## Requisitos
 
-- Python 3.10+
+- Python 3.9+ (recomendado 3.10+)
 - pyzmq >= 25.1.0
 
 ## Instalación
@@ -48,21 +48,21 @@ python pc1/start_pc1.py
 
 ## Uso del Monitoreo (PC3)
 
-Una vez ejecutado, el CLI muestra:
+Una vez ejecutado, el CLI muestra (ajusta IDs a tu `grid` en `config.json`; por defecto 2×2):
 
 ```
-Monitoreo> 1 INT_C3K2          # Consultar estado de intersección
+Monitoreo> 1 INT_C1K1          # Consultar estado de intersección
 Monitoreo> 2                   # Estado general de toda la cuadrícula
 Monitoreo> 3                   # Listar todos los semáforos
-Monitoreo> 4 SEM_C3K2_N VERDE ambulancia   # Override manual
+Monitoreo> 4 SEM_C1K1_N VERDE ambulancia   # Override manual
 Monitoreo> 5                   # Salir
 ```
 
 ## Tests
 
 ```bash
-python -m tests.test_functional    # Tests funcionales
-python -m tests.test_failover      # Tests de tolerancia a fallos
+python -m pytest tests/ -q         # Toda la suite (funcional, failover, override)
+python tests/integration_stack_smoke.py   # Opcional: humo PC3 MainDB → PC2 → PC1 (sin TTY en hijos: no usar PIPE sin drenar)
 ```
 
 ## Configuración
@@ -71,8 +71,8 @@ Editar `config.json` para cambiar:
 
 | Parámetro | Descripción | Default |
 |-----------|-------------|---------|
-| `grid.columns` / `grid.rows` | Tamaño de cuadrícula | 5x5 |
-| `sensor_frequency_seconds` | Frecuencia de sensores | 1s |
+| `grid.columns` / `grid.rows` | Tamaño de cuadrícula | 2×2 (ver `config.json`) |
+| `sensor_frequency_seconds` | Frecuencia de sensores | 5s (ver `config.json`) |
 | `thresholds.Q_MAX` | Cola máxima antes de congestión | 5 |
 | `thresholds.VP_MIN` | Velocidad mínima antes de congestión | 35 km/h |
 | `thresholds.D_MAX` | Densidad máxima antes de congestión | 20 veh/km |
@@ -110,6 +110,8 @@ entrega1_proyecto/
 ├── tests/                   # Tests
 │   ├── test_functional.py
 │   ├── test_failover.py
+│   ├── test_override.py
+│   ├── integration_stack_smoke.py
 │   └── test_data/
 ├── docs/                    # Documentación UML
 │   ├── informe_entrega1.md
@@ -136,6 +138,8 @@ entrega1_proyecto/
 ## Documentación
 
 - [Informe de Primera Entrega](docs/informe_entrega1.md)
+- Fuentes PlantUML (texto): carpeta `docs/diagramas_plantUML/*.md` — si las editas, regenera los `.png` con PlantUML.
+
 - [Diagrama de Despliegue](docs/diagramas_plantUML/diagrama_despliegue.png)
 - [Diagrama de Componentes](docs/diagramas_plantUML/diagrama_componentes.png)
 - [Diagrama de Clases](docs/diagramas_plantUML/diagrama_clases.png)

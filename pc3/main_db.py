@@ -142,14 +142,16 @@ class MainDBService:
                 sem_id = accion.get("semaforo_id", "")
                 estado_ant = accion.get("estado_anterior", "")
                 estado_new = accion.get("estado_nuevo", "")
+                razon = accion.get("razon", "congestion_detectada")
+                origen = accion.get("origen", "analytics")
 
                 self.db.insert_light_action(
                     accion_id=accion_id,
                     semaforo_id=sem_id,
                     estado_anterior=estado_ant,
                     estado_nuevo=estado_new,
-                    razon="congestion",
-                    origen="analytics",
+                    razon=razon,
+                    origen=origen,
                     timestamp=state.timestamp,
                 )
                 self.db.update_semaforo(sem_id, estado_new, state.timestamp)
@@ -159,8 +161,8 @@ class MainDBService:
                     "semaforo_id": sem_id,
                     "estado_anterior": estado_ant,
                     "estado_nuevo": estado_new,
-                    "razon": "congestion",
-                    "origen": "analytics",
+                    "razon": razon,
+                    "origen": origen,
                     "timestamp": state.timestamp,
                 })
                 self.publish_replication(rep_pub, "semaforos", "UPDATE", {

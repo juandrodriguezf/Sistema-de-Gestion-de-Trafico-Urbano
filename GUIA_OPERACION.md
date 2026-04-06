@@ -50,6 +50,8 @@ Ideal para desarrollo o pruebas rápidas. Los 3 servicios ("PCs") correrán como
     - Terminal 1: `python pc3/start_pc3.py`
     - Terminal 2: `python pc2/start_pc2.py`
     - Terminal 3: `python pc1/start_pc1.py`
+    
+    *Si automatizas el arranque con `subprocess` en Python, no uses `stdout=PIPE` sin consumir la salida: el volumen de logs puede llenar el buffer y bloquear los procesos.*
 
 ### **Opción B: Simulación en 3 computadores (Distribuida)**
 Requerida para la sustentación final y pruebas de red.
@@ -79,12 +81,14 @@ Para evitar errores de conexión inicial, el sistema debe encenderse en este ord
 
 El programa en PC3 abrirá una interfaz de línea de comandos tras iniciar la base de datos. Comandos disponibles:
 
-| Comando | Acción | Ejemplo |
+**Cuadrícula e IDs:** El tamaño de la ciudad viene de `config.json` → `grid.columns` y `grid.rows`. Con la configuración por defecto (**2×2**), las intersecciones válidas son `INT_C1K1`, `INT_C1K2`, `INT_C2K1`, `INT_C2K2` y los semáforos siguen el formato `SEM_C{col}K{fila}_{N|S|E|W}` (por ejemplo `SEM_C1K1_N`). Si amplías la cuadrícula, ajusta los ejemplos para usar solo IDs que existan en tu `config.json`.
+
+| Comando | Acción | Ejemplo (cuadrícula 2×2) |
 | :--- | :--- | :--- |
-| **1** | Consulta el estado de una intersección específica. | `1 INT_C3K2` |
+| **1** | Consulta el estado de una intersección específica. | `1 INT_C1K1` |
 | **2** | Consulta el estado general de toda la cuadrícula. | `2` |
 | **3** | Lista todos los semáforos activos del sistema. | `3` |
-| **4** | Fuerza un cambio de semáforo (Override manual). | `4 SEM_C3K2_N VERDE ambulancia` |
+| **4** | Fuerza un cambio de semáforo (Override manual). | `4 SEM_C1K1_N VERDE ambulancia` |
 | **5** | Cierra el servicio de monitoreo de forma segura. | `5` |
 
 ---

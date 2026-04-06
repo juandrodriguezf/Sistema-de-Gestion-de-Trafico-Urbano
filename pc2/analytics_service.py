@@ -24,10 +24,11 @@ from shared.models import (
 from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION, PRIORIDAD,
     SENSOR_ESPIRA, SENSOR_CAMARA, SENSOR_GPS,
-    REASON_CONGESTION, REASON_NORMAL, REASON_PRIORITY,
+    REASON_CONGESTION, REASON_NORMAL, REASON_PRIORITY, REASON_MANUAL,
     ORIGIN_ANALYTICS, ORIGIN_MONITORING,
     CMD_CONSULTA, CMD_OVERRIDE, CMD_LISTAR_SEMAFOROS,
     TOPIC_SENSOR, TOPIC_HEARTBEAT,
+    parse_semaforo_id, semaforo_topic, intersection_id,
 )
 from shared.validation import validate_sensor_event, validate_override_command, validate_query
 from shared.db_utils import DatabaseManager
@@ -77,6 +78,10 @@ class AnalyticsService:
         # ─── Conexión a la BD ───
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "replica_traffic.db")
         self.replica_db = DatabaseManager(db_path)
+
+        # Asignados en run() antes del hilo de monitoreo (override / PUSH)
+        self._light_pub = None
+        self._push_socket = None
 
     def _init_metrics(self):
         """Inicializa el seguimiento de métricas para todas las intersecciones."""
@@ -165,11 +170,16 @@ class AnalyticsService:
             col, row = int(parts[0]), int(parts[1])
             sem_id = f"SEM_C{col}K{row}_N"  # Default: cambia luz norte
 
+            prev = self.replica_db.get_semaforo_state(sem_id)
+            estado_anterior = prev if prev in (VERDE, ROJO) else ROJO
+
             accion = {
                 "tipo": "CAMBIO_LUZ",
                 "semaforo_id": sem_id,
-                "estado_anterior": "ROJO",
-                "estado_nuevo": "VERDE",
+                "estado_anterior": estado_anterior,
+                "estado_nuevo": VERDE,
+                "razon": REASON_CONGESTION,
+                "origen": ORIGIN_ANALYTICS,
             }
 
             # Envía comando de cambio de luz
@@ -177,8 +187,9 @@ class AnalyticsService:
                 semaforo_id=sem_id,
                 nuevo_estado=VERDE,
                 razon=REASON_CONGESTION,
+                origen=ORIGIN_ANALYTICS,
             )
-            topic = f"semaforo/cambio/C{col}K{row}"
+            topic = semaforo_topic(col, row)
             light_pub.send_string(f"{topic} {light_cmd.to_json()}")
             logger.info(f"CONGESTION en {int_id} → {sem_id} → VERDE")
 
@@ -257,7 +268,7 @@ class AnalyticsService:
                         datos={"interseccion": int_id, "estado": estado, "metricas": metrics},
                         mensaje=f"Estado de {int_id}: {estado}",
                     )
-                return MonitoringResponse(tipo="ERROR", mensaje=f"Intersection {int_id} no se encontro")
+                return MonitoringResponse(tipo="ERROR", mensaje=f"Interseccion {int_id} no se encontro")
 
             elif consulta == "ESTADO_GENERAL":
                 summary = {}
@@ -270,8 +281,11 @@ class AnalyticsService:
                 )
 
             elif consulta == CMD_LISTAR_SEMAFOROS:
-                #se retorna los semaforos desde la bd replica
-                sems = self.replica_db.get_all_semaforos()
+                #se retorna los semaforos desde la bd replica, filtrados por grilla configurada
+                sems = self.replica_db.get_all_semaforos(
+                    columns=self.config["grid"]["columns"],
+                    rows=self.config["grid"]["rows"]
+                )
                 mode_str = "replica" if self.use_replica else "main"
                 return MonitoringResponse(
                     tipo="RESPUESTA",
@@ -283,19 +297,121 @@ class AnalyticsService:
             valid, reason = validate_override_command(data, self.monitor_token)
             if not valid:
                 return MonitoringResponse(tipo="ERROR", mensaje=reason)
-
-            sem_id = data["semaforo_id"]
-            nuevo_estado = data["nuevo_estado"]
-            motivo = data.get("motivo", "manual")
-
-            logger.info(f"OVERRIDE: {sem_id} -> {nuevo_estado} (motivo: {motivo})")
-            return MonitoringResponse(
-                tipo="RESPUESTA",
-                datos={"semaforo_id": sem_id, "nuevo_estado": nuevo_estado, "ejecutado": True},
-                mensaje=f"Override ejecutado: {sem_id} -> {nuevo_estado}",
+            return self._execute_override(
+                data["semaforo_id"],
+                data["nuevo_estado"],
+                data.get("motivo", "manual"),
             )
 
         return MonitoringResponse(tipo="ERROR", mensaje=f"Tipo de solicitud desconocido: {tipo}")
+
+    def _execute_override(self, sem_id: str, nuevo_estado: str, motivo: str) -> MonitoringResponse:
+        """Publica cambio de luz, persiste en main (PUSH) o en réplica si hay failover."""
+        parsed = parse_semaforo_id(sem_id)
+        if not parsed:
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje=f"semaforo_id invalido (se espera SEM_CxKy_N|S|E|W): {sem_id}",
+            )
+
+        col, row, _direction = parsed
+        int_id = intersection_id(col, row)
+
+        if self._light_pub is None or self._push_socket is None:
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje="Servicio de analitica aun no inicializo los sockets ZMQ",
+            )
+
+        prev = self.replica_db.get_semaforo_state(sem_id)
+        estado_anterior = prev if prev in (VERDE, ROJO) else ROJO
+
+        motivo_l = str(motivo).lower()
+        razon = REASON_PRIORITY if "ambulancia" in motivo_l else REASON_MANUAL
+
+        light_cmd = LightAction(
+            semaforo_id=sem_id,
+            nuevo_estado=nuevo_estado,
+            razon=razon,
+            origen=ORIGIN_MONITORING,
+        )
+        topic = semaforo_topic(col, row)
+        try:
+            self._light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+        except Exception as e:
+            logger.error(f"Override: error al publicar comando de semaforo: {e}")
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje=f"No se pudo enviar el comando al controlador: {e}",
+            )
+
+        metrics = dict(
+            self.intersection_metrics.get(
+                int_id,
+                {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0},
+            )
+        )
+        accion = {
+            "tipo": "CAMBIO_LUZ",
+            "semaforo_id": sem_id,
+            "estado_anterior": estado_anterior,
+            "estado_nuevo": nuevo_estado,
+            "razon": razon,
+            "origen": ORIGIN_MONITORING,
+        }
+        traffic_state = TrafficState(
+            interseccion=int_id,
+            estado=PRIORIDAD,
+            metricas=metrics,
+            accion_tomada=accion,
+        )
+
+        if not self.use_replica:
+            try:
+                self._push_socket.send_string(traffic_state.to_json(), flags=zmq.NOBLOCK)
+            except zmq.error.Again:
+                logger.warning("Override: socket PUSH lleno o no disponible; BD principal puede no reflejar el cambio.")
+            except Exception as e:
+                logger.error(f"Override: error al enviar a la BD principal: {e}")
+                return MonitoringResponse(
+                    tipo="ERROR",
+                    mensaje=f"Comando enviado al semaforo pero fallo la persistencia: {e}",
+                )
+        else:
+            try:
+                ts = traffic_state.timestamp
+                self.replica_db.insert_traffic_state(
+                    int_id,
+                    metrics["Q"],
+                    metrics["Vp"],
+                    metrics["D"],
+                    metrics["vehiculos_por_minuto"],
+                    PRIORIDAD,
+                    ts,
+                )
+                self.replica_db.insert_light_action(
+                    str(uuid.uuid4()),
+                    sem_id,
+                    estado_anterior,
+                    nuevo_estado,
+                    razon,
+                    ORIGIN_MONITORING,
+                    ts,
+                )
+                self.replica_db.update_semaforo(sem_id, nuevo_estado, ts)
+            except Exception as e:
+                logger.error(f"Override: error al escribir en la BD replica: {e}")
+                return MonitoringResponse(
+                    tipo="ERROR",
+                    mensaje=f"Comando enviado al semaforo pero fallo la BD replica: {e}",
+                )
+
+        logger.info(f"OVERRIDE: {sem_id} -> {nuevo_estado} (motivo: {motivo}, razon: {razon})")
+        return MonitoringResponse(
+            tipo="RESPUESTA",
+            datos={"semaforo_id": sem_id, "nuevo_estado": nuevo_estado, "ejecutado": True},
+            mensaje=f"Override ejecutado: {sem_id} -> {nuevo_estado}",
+        )
 
     # ═══════════════════════════════════════════
     # Monitor de heartbeat (se ejecuta en hilo)
@@ -342,23 +458,23 @@ class AnalyticsService:
         # ─── PUSH socket: envía datos a la BD principal (PC3) ───
         push_socket = self.context.socket(zmq.PUSH)
         push_socket.connect(f"tcp://{pc3_host}:{self.ports['analytics_to_db']}")
-        logger.info(f"PUSH connected to DB at tcp://{pc3_host}:{self.ports['analytics_to_db']}")
+        logger.info(f"PUSH conectado  BD en tcp://{pc3_host}:{self.ports['analytics_to_db']}")
 
         # ─── PUB socket: envía comandos de cambio de semáforo ───
         light_pub = self.context.socket(zmq.PUB)
         light_pub.bind(f"tcp://{pc2_host}:{self.ports['analytics_to_lights']}")
-        logger.info(f"Light PUB bound at tcp://{pc2_host}:{self.ports['analytics_to_lights']}")
+        logger.info(f"Luces conectadas en tcp://{pc2_host}:{self.ports['analytics_to_lights']}")
 
         # ─── REP socket: responde a Monitoreo ───
         rep_socket = self.context.socket(zmq.REP)
         rep_socket.bind(f"tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}")
-        logger.info(f"REP bound at tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}")
+        logger.info(f"REP conectado en tcp://{pc2_host}:{self.ports['monitoring_to_analytics']}")
 
         # ─── SUB socket: heartbeat de PC3 ───
         hb_socket = self.context.socket(zmq.SUB)
         hb_socket.connect(f"tcp://{pc3_host}:{self.ports['heartbeat']}")
         hb_socket.setsockopt_string(zmq.SUBSCRIBE, TOPIC_HEARTBEAT)
-        logger.info(f"Heartbeat SUB connected to tcp://{pc3_host}:{self.ports['heartbeat']}")
+        logger.info(f"Heartbeat SUB conectado a tcp://{pc3_host}:{self.ports['heartbeat']}")
 
         # ─── Inicializa la BD réplica ───
         self.replica_db.connect()
@@ -366,6 +482,9 @@ class AnalyticsService:
             self.grid["columns"], self.grid["rows"],
             ["N", "S", "E", "W"]
         )
+
+        self._light_pub = light_pub
+        self._push_socket = push_socket
 
         self.running = True
 
@@ -394,7 +513,7 @@ class AnalyticsService:
                             event_count += 1
                             if event_count % 100 == 0:
                                 mode = "REPLICA" if self.use_replica else "MAIN"
-                                logger.info(f"Processed {event_count} events (DB: {mode})")
+                                logger.info(f"Procesados {event_count} eventos (DB: {mode})")
                         except Exception as e:
                             logger.error(f"Error al procesar el evento: {e}")
         except KeyboardInterrupt:
