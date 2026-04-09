@@ -159,6 +159,24 @@ Donde:
 - Requiere autenticación (`auth_token`) y verificación de origen
 - El semáforo cambia inmediatamente a VERDE para la dirección solicitada
 
+### 5.4 Tipos de Consulta del Usuario
+
+El Servicio de Monitoreo (PC3) ofrece las siguientes operaciones al usuario a través de una CLI interactiva, comunicándose con el Analytics Service (PC2) mediante el patrón REQ/REP:
+
+| # | Operación | Comando CLI | Descripción |
+|---|-----------|-------------|-------------|
+| 1 | Estado de intersección | `1 INT_C3K2` | Consulta puntual: devuelve el estado de tráfico actual de una intersección específica, incluyendo métricas (Q, Vp, D), estado de sus semáforos y último timestamp de evaluación |
+| 2 | Estado general | `2` | Consulta global: devuelve un resumen del estado de tráfico de **todas** las intersecciones de la cuadrícula, permitiendo detectar zonas de congestión simultánea |
+| 3 | Listar semáforos | `3` | Consulta de semaforización: lista todos los semáforos configurados en la cuadrícula con su estado actual (VERDE/ROJO), dirección e intersección asociada |
+| 4 | Override manual | `4 SEM_C3K2_N VERDE ambulancia` | Indicación directa: fuerza el cambio de estado de un semáforo específico, independientemente de las reglas de tráfico |
+
+**Ejemplos de indicaciones directas (Override):**
+
+- **Paso de ambulancia:** `4 SEM_C1K1_N VERDE ambulancia` → Cambia el semáforo Norte de la intersección C1K1 a VERDE inmediatamente. Se registra con `razon = REASON_PRIORITY` en la tabla `acciones_semaforo`.
+- **Cambio manual del operador:** `4 SEM_C3K2_E ROJO manual` → El operador fuerza el semáforo Este de C3K2 a ROJO. Se registra con `razon = REASON_MANUAL`.
+
+Todas las operaciones imprimen por pantalla la respuesta del Analytics Service, incluyendo tipo de respuesta, mensaje descriptivo, datos JSON (cuando aplica) y timestamp.
+
 ---
 
 ## 6. Tolerancia a Fallos
@@ -210,7 +228,62 @@ Ver: [Diagrama de Secuencia](./diagramas_plantUML/diagrama_secuencia.png) — Fl
 
 ---
 
-## 8. Diagramas UML
+## 8. Inicialización de Recursos
+
+### 8.1 Fuente de Configuración
+
+Todos los procesos del sistema obtienen su definición inicial de recursos a partir del archivo centralizado `config.json`, ubicado en la raíz del proyecto. Cada script de arranque (`start_pc1.py`, `start_pc2.py`, `start_pc3.py`) lee este archivo al iniciar y extrae los parámetros necesarios para la creación dinámica de componentes.
+
+### 8.2 Parámetros Configurables
+
+| Parámetro | Clave en `config.json` | Ejemplo | Efecto |
+|-----------|----------------------|---------|--------|
+| Tamaño de la cuadrícula | `grid.columns`, `grid.rows` | `5, 5` | Determina N×M intersecciones |
+| Frecuencia de sensores | `sensor_frequency_seconds` | `5` | Intervalo entre eventos generados (segundos) |
+| Método de generación | `load_generation` | `"random"` | Generador aleatorio o desde archivo |
+| Umbrales de congestión | `thresholds.Q_MAX`, `VP_MIN`, `D_MAX` | `5, 35, 20` | Parámetros del motor de reglas |
+| Intervalo de heartbeat | `heartbeat_interval_seconds` | `5` | Frecuencia del latido de PC3 |
+| Timeout de heartbeat | `heartbeat_timeout_seconds` | `15` | Tiempo máximo sin heartbeat para declarar fallo |
+| Puertos ZMQ | `zmq_ports.*` | `5555–5561` | Puertos de cada canal de comunicación |
+| Hosts de los PCs | `pc1_host`, `pc2_host`, `pc3_host` | `"localhost"` o IP | Dirección de cada nodo para modo distribuido |
+| Rangos de datos | `data_ranges.*` | `{min: 0, max: 30}` | Límites para generación aleatoria de datos |
+| Probabilidad de pico | `congestion_spike_probability` | `0.10` | Probabilidad de generar valores extremos de congestión |
+| Tokens de autenticación | `auth_tokens.*` | — | Prefijo de tokens de sensores y token de monitoreo |
+
+### 8.3 Proceso de Inicialización por Nodo
+
+**PC1 — Generación de Datos:**
+1. Lee `grid.columns` (N) y `grid.rows` (M) de `config.json`.
+2. Inicia 1 proceso Broker (XPUB/XSUB).
+3. Para cada intersección `INT_C{c}K{r}` (c ∈ [1,N], r ∈ [1,M]), genera 3 procesos sensor independientes: `ESP_CcKr`, `CAM_CcKr`, `GPS_CcKr`.
+4. **Total de procesos:** 1 Broker + (N × M × 3) sensores.
+
+**PC3 — Persistencia:**
+1. Lee la configuración de cuadrícula y puertos.
+2. Inicializa la base de datos principal (`main_traffic.db`) ejecutando el esquema SQL.
+3. Ejecuta la función `seed_all()` que registra automáticamente:
+   - N × M intersecciones en la tabla `intersecciones`.
+   - N × M × 3 sensores en la tabla `sensores`.
+   - N × M × 4 semáforos en la tabla `semaforos` (4 direcciones: N, S, E, W por intersección), con estados iniciales alternos (VERDE/ROJO) para evitar conflictos.
+4. Inicia el servicio de Heartbeat (PUB, cada 5 segundos) y el socket PULL para recibir datos del Analytics.
+
+**PC2 — Analítica y Control:**
+1. Lee la configuración completa.
+2. Inicializa la base de datos réplica (`replica_traffic.db`) con el mismo esquema y seed.
+3. Conecta los sockets SUB al Broker (PC1), REP para Monitoring (PC3), PUSH para Main DB (PC3), SUB para Heartbeat, y SUB para replicación.
+4. Inicia el Traffic Light Controller (SUB) y el Replica DB Service (SUB).
+
+### 8.4 Generación de Datos de Sensores
+
+Se utiliza **generación aleatoria** (Opción A) para la primera entrega:
+- Los valores se generan con `random.uniform()` dentro de los rangos definidos en `data_ranges` de `config.json`.
+- Un 10% de los eventos se generan como "picos de congestión" con valores extremos para forzar la activación de las reglas.
+- La frecuencia de publicación es configurable (`sensor_frequency_seconds`, por defecto 5 segundos).
+- Cada sensor genera un mensaje JSON completo con `message_id` (UUID), `sensor_id`, `timestamp`, `datos` y `auth_token`.
+
+---
+
+## 9. Diagramas UML
 
 Las fuentes editables están en `docs/diagramas_plantUML/*.md` (bloques `plantuml`). Los `.png` son vistas exportadas: si cambias el texto UML, **vuelve a generar los PNG** con tu herramienta PlantUML para que coincidan con el código.
 
@@ -223,9 +296,97 @@ Las fuentes editables están en `docs/diagramas_plantUML/*.md` (bloques `plantum
 
 ---
 
-## 9. Código Fuente
+## 10. Protocolo de Pruebas
 
-### 9.1 Descripción de Módulos
+### 10.1 Pruebas Funcionales
+
+Estas pruebas validan que cada componente del sistema opera correctamente de forma individual y en su interacción con los demás.
+
+| ID | Prueba | Descripción | Resultado Esperado |
+|----|--------|-------------|--------------------|
+| F1 | Publicación de sensores | Cada sensor genera y envía un evento JSON al Broker | El Broker recibe el evento y lo reenvía sin pérdida |
+| F2 | Recepción en Analytics | Analytics recibe eventos reenviados por el Broker | El evento se procesa, se valida y se evalúan las reglas |
+| F3 | Detección de congestión | Se envían datos que cumplen `Q ≥ 5 O Vp ≤ 35 O D ≥ 20` | Analytics genera una acción de cambio de semáforo a VERDE |
+| F4 | Tráfico normal | Se envían datos dentro de rangos normales | No se genera cambio de semáforo; estado permanece igual |
+| F5 | Override manual | El usuario envía un override desde Monitoring CLI | El semáforo cambia inmediatamente y se registra en BD |
+| F6 | Mensaje inválido | Se envía un evento con sensor_id inexistente o datos fuera de rango | El mensaje es rechazado y se registra en el log |
+| F7 | Persistencia en BD | Analytics procesa un evento y lo envía a Main DB | El evento se almacena correctamente en la tabla `eventos` |
+| F8 | Replicación normal | Main DB recibe un dato y publica la réplica | Replica DB recibe y aplica el dato; ambas BDs son consistentes |
+| F9 | Consulta de intersección | El usuario consulta estado de una intersección específica | Se devuelve estado de tráfico, métricas y semáforos actuales |
+| F10 | Consulta general | El usuario solicita estado general | Se devuelve resumen de todas las intersecciones |
+
+### 10.2 Pruebas de Tolerancia a Fallos
+
+Estas pruebas verifican que el sistema continúa operando correctamente ante la falla de PC3.
+
+| ID | Prueba | Descripción | Resultado Esperado |
+|----|--------|-------------|--------------------|
+| FT1 | Detección de caída | Se apaga el proceso de PC3 (Main DB) | Analytics detecta la ausencia de heartbeat tras 15 segundos y activa `use_replica = True` |
+| FT2 | Operación en failover | Se envían eventos con PC3 caído | Analytics persiste datos directamente en la BD réplica de PC2; el sistema continúa operando |
+| FT3 | Consulta durante failover | El usuario realiza una consulta desde Monitoring | La consulta se responde correctamente usando datos de la BD réplica |
+| FT4 | Recuperación de PC3 | Se reinicia PC3 y reanuda heartbeat | Analytics detecta el heartbeat restaurado y pone `use_replica = False`; las nuevas escrituras van a Main DB |
+| FT5 | Transparencia al usuario | El usuario opera la CLI antes, durante y después del failover | Las respuestas mantienen el mismo formato; la funcionalidad no se ve afectada |
+
+**Nota sobre la ejecución de FT3 y FT5:** Dado que `start_pc3.py` lanza tanto Main DB como el Monitoring CLI en un mismo script, al cerrar PC3 completamente se perdería también la interfaz de usuario. Para ejecutar estas pruebas, se lanzan los procesos de PC3 en **terminales independientes** en lugar de usar el launcher:
+
+```bash
+# Terminal A — Main DB (este es el proceso que se matará para simular la falla)
+python pc3/main_db.py
+
+# Terminal B — Monitoring CLI (permanece activo durante todo el failover)
+python pc3/monitoring_service.py
+```
+
+La falla simulada consiste en cerrar únicamente la **Terminal A** (`main_db.py`). Como el Monitoring CLI se conecta directamente a Analytics (PC2) vía REQ/REP y no depende de Main DB, la Terminal B permanece operativa y permite realizar consultas durante el failover. Analytics detecta la ausencia de heartbeat y responde las consultas usando la BD réplica de PC2.
+
+---
+
+## 11. Obtención de Métricas de Rendimiento
+
+### 11.1 Métrica 1: Solicitudes Almacenadas en BD en 2 Minutos
+
+**Definición:** Cantidad total de registros insertados en la tabla `eventos` de la base de datos durante un intervalo fijo de 2 minutos de ejecución del sistema.
+
+**Metodología de medición:**
+1. Antes de iniciar la prueba, se ejecuta `SELECT COUNT(*) FROM eventos` para obtener el conteo base (`count_inicio`).
+2. Se inician los 3 PCs y se deja el sistema operando durante exactamente 120 segundos. El tiempo se controla con la librería `time` de Python (`time.time()` para marcas de inicio y fin).
+3. Al finalizar los 120 segundos, se detienen los sensores y se ejecuta nuevamente `SELECT COUNT(*) FROM eventos` para obtener `count_fin`.
+4. **Resultado:** `solicitudes_almacenadas = count_fin - count_inicio`.
+5. Se repite el experimento 3 veces por escenario y se reporta el promedio.
+
+**Herramientas:**
+- `time.time()` de Python para control de intervalos.
+- Consultas SQL directas sobre la base de datos SQLite (`db_utils.get_event_count()`).
+- Script de prueba automatizado en `tests/` que orquesta el arranque, espera y conteo.
+
+### 11.2 Métrica 2: Tiempo de Respuesta de Override (Latencia End-to-End)
+
+**Definición:** Tiempo transcurrido desde que el usuario envía un comando de override desde el Monitoring Service hasta que el Traffic Light Controller confirma el cambio de estado del semáforo.
+
+**Metodología de medición:**
+1. Se registra el timestamp de alta resolución (`time.perf_counter()`) justo **antes** de enviar el mensaje REQ desde el Monitoring Service.
+2. Se registra el timestamp justo **después** de recibir la respuesta REP del Analytics Service (que confirma que el override fue procesado y el comando de cambio fue enviado al Controller).
+3. **Resultado:** `latencia_ms = (t_respuesta - t_envio) * 1000`.
+4. Se realizan al menos 10 overrides por escenario y se reportan: promedio, mínimo, máximo y desviación estándar.
+
+**Herramientas:**
+- `time.perf_counter()` de Python para medición de alta resolución (microsegundos).
+- Logging con timestamps en cada componente para trazabilidad del recorrido del mensaje.
+- Script de prueba en `tests/` que envía overrides programáticos y mide la latencia.
+
+### 11.3 Presentación de Resultados
+
+Los resultados se presentarán en:
+- **Tablas comparativas** con el formato de la Tabla 1 del enunciado (diseño original vs. diseño multihilos).
+- **Gráficos de barras** comparando solicitudes almacenadas por escenario.
+- **Gráficos de líneas** mostrando la latencia de override en función de la carga.
+- **Análisis escrito** comentando los resultados, identificando cuellos de botella y justificando cuál diseño es más escalable.
+
+---
+
+## 12. Código Fuente
+
+### 12.1 Descripción de Módulos
 
 | Módulo | Archivo | Responsabilidad |
 |--------|---------|-----------------|
@@ -244,7 +405,7 @@ Las fuentes editables están en `docs/diagramas_plantUML/*.md` (bloques `plantum
 | BD Utils | `shared/db_utils.py` | Gestión de base de datos |
 | Constantes | `shared/constants.py` | Nomenclatura y constantes |
 
-### 9.2 Instrucciones de Ejecución
+### 12.2 Instrucciones de Ejecución
 
 ```bash
 # 1. Instalar dependencias
@@ -265,9 +426,9 @@ python -m pytest tests/ -q
 
 ---
 
-## 10. Conclusiones
+## 13. Conclusiones
 
-### 10.1 Decisiones de Diseño Tomadas
+### 13.1 Decisiones de Diseño Tomadas
 
 - **ZeroMQ** como middleware de comunicación por su ligereza y soporte de múltiples patrones
 - **SQLite** para persistencia por su simplicidad y replicabilidad
@@ -275,7 +436,7 @@ python -m pytest tests/ -q
 - **Heartbeat + failover automático** para tolerancia a fallos (lectura/escritura en réplica; recuperación sin backfill automático hacia Main)
 - **Configuración centralizada** en `config.json` para flexibilidad
 
-### 10.2 Preparación para Segunda Entrega
+### 13.2 Preparación para Segunda Entrega
 
 El diseño actual está preparado para la segunda entrega (multithreading):
 - El Broker XPUB/XSUB puede reemplazarse con un broker ROUTER/DEALER con threads
