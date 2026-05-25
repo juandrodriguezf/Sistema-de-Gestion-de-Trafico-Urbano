@@ -236,14 +236,14 @@ Se implementó un script automatizado (`tests/run_experiments.py`) que ejecuta 4
 | Original | `pc1/broker.py` | `zmq.proxy()` estándar (un solo hilo) |
 | Multihilos | `pc1/broker_threaded.py` | Implementación manual con `zmq.Poller` + `threading` (4 hilos: frontend RX, frontend TX, backend RX, backend TX) |
 
-### 9.4 Resultados
+### 9.4 Resultados (promedio de 3 corridas)
 
-| Escenario | Broker | Eventos/2min | Latencia (ms) |
-|-----------|--------|-------------|--------------|
-| 1 sensor c/u @10s | Original | 36 | 3.7 |
-| 1 sensor c/u @10s | Multihilos | 36 | 2.2 |
-| 2 sensores c/u @5s | Original | 144 | 4.6 |
-| 2 sensores c/u @5s | Multihilos | 144 | 10.7 |
+| Escenario | Broker | Eventos/2min (μ±σ) | Latencia ms (μ±σ) |
+|-----------|--------|-------------------|-------------------|
+| 1 sensor c/u @10s | Original | 36.0 ± 0.0 | 3.6 ± 0.3 |
+| 1 sensor c/u @10s | Multihilos | 36.0 ± 0.0 | 6.4 ± 3.4 |
+| 2 sensores c/u @5s | Original | 144.0 ± 0.0 | 2.9 ± 0.2 |
+| 2 sensores c/u @5s | Multihilos | 144.0 ± 0.0 | 5.8 ± 4.1 |
 
 ### 9.5 Gráficas
 
@@ -255,17 +255,19 @@ Se implementó un script automatizado (`tests/run_experiments.py`) que ejecuta 4
 
 *Figura 2: Latencia promedio de override manual para cada combinación escenario × diseño.*
 
-### 9.6 Análisis
+### 9.6 Análisis (3 corridas)
 
-**Pérdida de eventos: cero.** Ambos diseños capturan el 100 % de los eventos generados en ambos escenarios. El broker multihilos no introduce pérdida de mensajes gracias al reenvío correcto de suscripciones XPUB→XSUB mediante los hilos `_sub_reader` y `_sub_writer`.
+**Pérdida de eventos: cero.** Ambos diseños capturan el 100 % de los eventos generados en ambos escenarios. El broker multihilos no introduce pérdida de mensajes gracias al reenvío correcto de suscripciones XPUB→XSUB mediante los hilos `_sub_reader` y `_sub_writer`. El conteo de eventos es exactamente el máximo teórico con varianza cero en ambos diseños (σ = 0.0).
 
-**Latencia en baja carga:** El broker multihilos es ~40 % más rápido (2.2 ms vs. 3.7 ms) porque los hilos adicionales permiten que el mensaje de override se procese sin esperar a que termine el ciclo de reenvío de eventos de sensores.
+**Latencia: el broker original es más rápido en ambos escenarios.** Contrario a lo observado en pruebas preliminares de una sola corrida, el promedio de 3 corridas muestra que el broker original con `zmq.proxy()` aventaja al multihilos en ~44 % en baja carga (3.6 ms vs. 6.4 ms) y ~50 % en alta carga (2.9 ms vs. 5.8 ms).
 
-**Latencia en alta carga:** El broker original es ~57 % más rápido (4.6 ms vs. 10.7 ms). Bajo carga alta, la contención por las `queue.Queue` compartidas y el GIL de Python penalizan al diseño multihilos. Cada mensaje atraviesa 4 colas intermedias (frontend RX→backend TX, backend RX→frontend TX, y subscripciones en ambos sentidos), lo que añade latencia bajo presión.
+**Varianza: el broker original es determinista, el multihilos es errático.** La desviación estándar del broker original es mínima (σ ≈ 0.2–0.3 ms), lo que indica un comportamiento estable y predecible. El broker multihilos presenta una varianza enorme (σ ≈ 3.4–4.1 ms), con rangos que van desde ~1 ms hasta ~11 ms. Esta inestabilidad se debe a la contención por el GIL de Python y las colas `queue.Queue` compartidas: cuando el hilo de reenvío de suscripciones o eventos toma el GIL, los mensajes de override se retrasan.
 
-**Escalabilidad:** El broker original (`zmq.proxy()`) ejecuta el reenvío en espacio de kernel de C (ZeroMQ internamente), por lo que escala mejor en un solo núcleo. El diseño multihilos ofrece la ventaja de poder distribuir la carga si se migrara a un patrón ROUTER/DEALER con workers independientes, pero en la implementación actual XPUB/XSUB con `Poller`+`Queue` el cuello de botella es la copia entre colas.
+**Causa raíz:** El broker multihilos utiliza 4 hilos Python comunicándose a través de 4 colas `queue.Queue` (cada una protegida con un lock). Cada mensaje de override compite por el GIL con los hilos que están reenviando eventos de sensores (6 sensores × 1 mensaje/5–10s) más el tráfico de heartbeat y replicación (ReplicaDB ahora activa durante los experimentos). En contraste, `zmq.proxy()` ejecuta el bucle de reenvío íntegramente en C dentro de libzmq, fuera del GIL, sin locks ni copias intermedias.
 
-**Recomendación:** Para la configuración actual (2×2, frecuencia 5–10s), el broker original con `zmq.proxy()` es suficiente. El broker multihilos es útil como demostración conceptual de escalabilidad y como base para futuras implementaciones con balanceo de carga (ROUTER/DEALER).
+**Efecto de ReplicaDB:** Los experimentos anteriores no incluían `replica_db.py` en el stack. Al agregarlo, el tráfico de replicación (PUB/SUB en puerto 5560) añade carga adicional que el multihilos maneja peor debido a la contención de hilos.
+
+**Recomendación:** Para el diseño actual XPUB/XSUB con colas Python, el broker original con `zmq.proxy()` es superior en latencia, estabilidad y simplicidad. El broker multihilos demuestra que el enfoque de "más hilos" no es una mejora automática bajo el GIL de Python; para obtener verdadero paralelismo sería necesario migrar a un patrón ROUTER/DEALER con procesos independientes (no hilos) o utilizar implementaciones en C/C++.
 
 ---
 
@@ -275,6 +277,6 @@ Se implementó un script automatizado (`tests/run_experiments.py`) que ejecuta 4
 - Los visores `LiveViewer` y `TraceabilityViewer` proporcionan dos perspectivas complementarias: un dashboard general de estado del sistema y una tabla cruda de eventos para depuración y verificación de trazabilidad.
 - La conversión UTC→hora local permite que los operadores vean los timestamps en su zona horaria sin modificar el almacenamiento en la BD (que sigue siendo UTC).
 - El contador secuencial `_msg_counter` y el ID truncado a 8 caracteres facilitan la correlación visual entre los logs de PC1 y el `TraceabilityViewer` en PC3.
-- El broker multihilos (`broker_threaded.py`) es un reemplazo funcional del broker original con `zmq.proxy()`, y demuestra cero pérdida de eventos en ambos escenarios de carga.
-- Bajo carga baja, el broker multihilos reduce la latencia de override en ~40 % (2.2 ms vs. 3.7 ms); bajo carga alta, el original es ~57 % más rápido (4.6 ms vs. 10.7 ms) debido a la contención por colas compartidas y el GIL.
+- El broker multihilos (`broker_threaded.py`) es un reemplazo funcional del broker original con `zmq.proxy()`, y demuestra cero pérdida de eventos en ambos escenarios de carga con varianza nula (σ = 0.0).
+- El broker original es más rápido en ambos escenarios: ~44 % en baja carga (3.6 ms vs. 6.4 ms) y ~50 % en alta carga (2.9 ms vs. 5.8 ms). Además, el original es determinista (σ ≈ 0.2 ms) mientras que el multihilos presenta una varianza enorme (σ ≈ 4 ms) debido a la contención por el GIL y las colas compartidas.
 - El script `tests/run_experiments.py` automatiza la recolección de métricas para la Tabla 1 de la rúbrica y genera gráficas comparativas de eventos y latencia.

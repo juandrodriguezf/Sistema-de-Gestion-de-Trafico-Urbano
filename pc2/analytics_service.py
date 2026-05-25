@@ -180,11 +180,16 @@ class AnalyticsService:
     # Procesar evento de sensor
     # ═══════════════════════════════════════════
 
+    def _build_auth_tokens(self) -> dict:
+        """Construye dict {sensor_id: token} para pasar a validate_sensor_event."""
+        prefix = self.sensor_token_prefix
+        return {sid: prefix + sid for sid in self.registered_sensors}
+
     def process_event(self, event: SensorEvent, push_socket: zmq.Socket, light_pub: zmq.Socket):
         """Procesa un evento de sensor: valida, actualiza, evalua y actúa."""
         # 1. Valida
         event_dict = json.loads(event.to_json())
-        valid, reason = validate_sensor_event(event_dict, self.registered_sensors)
+        valid, reason = validate_sensor_event(event_dict, self.registered_sensors, self._build_auth_tokens())
         if not valid:
             logger.warning(f"Evento inválido de {event.sensor_id}: {reason}")
             return
