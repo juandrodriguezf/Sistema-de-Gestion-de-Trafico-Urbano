@@ -1,6 +1,7 @@
 """
 start_pc1.py - Lanzador para todos los procesos de PC1 (Broker + Sensores).
 Inicia el broker primero, luego genera un proceso sensor por tipo por intersección.
+Usa --threaded para usar la variante multihilos del broker.
 """
 
 import subprocess
@@ -10,6 +11,7 @@ import json
 import time
 import signal
 import logging
+import argparse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -18,10 +20,20 @@ logger = logging.getLogger("PC1-Launcher")
 
 
 def main():
+    parser = argparse.ArgumentParser(description="PC1 Launcher")
+    parser.add_argument("--threaded", action="store_true",
+                        help="Usar la variante multihilos del broker (broker_threaded.py)")
+    parser.add_argument("--frequency", type=int, default=None,
+                        help="Sobrescribir sensor_frequency_seconds (para experimentos)")
+    args = parser.parse_args()
+
     # Carga la configuración
     config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
     with open(config_path) as f:
         config = json.load(f)
+
+    if args.frequency:
+        config["sensor_frequency_seconds"] = args.frequency
 
     grid = config["grid"]
     cols = grid["columns"]
@@ -35,9 +47,10 @@ def main():
     processes = []
 
     # 1. Inicia el broker
-    logger.info("Iniciando broker...")
+    broker_script = "broker_threaded.py" if args.threaded else "broker.py"
+    logger.info(f"Iniciando broker ({broker_script})...")
     broker_proc = subprocess.Popen(
-        [python, os.path.join(pc1_dir, "broker.py")],
+        [python, os.path.join(pc1_dir, broker_script)],
         cwd=os.path.join(pc1_dir, ".."),
     )
     processes.append(("BrokerZMQ", broker_proc))
@@ -62,7 +75,7 @@ def main():
                 processes.append((name, proc))
                 total_sensors += 1
 
-    logger.info(f"PC1 iniciado: 1 Broker + {total_sensors} sensores ({cols}x{rows} grid, 3 por interseccion)")
+    logger.info(f"PC1 iniciado: 1 Broker ({'threaded' if args.threaded else 'original'}) + {total_sensors} sensores ({cols}x{rows} grid, 3 por interseccion)")
     logger.info("Presiona Ctrl+C para apagar todos los procesos")
 
     # Espera la interrupción

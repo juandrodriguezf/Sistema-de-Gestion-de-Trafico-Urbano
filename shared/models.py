@@ -113,6 +113,8 @@ class MonitoringRequest:
     nuevo_estado: str = ""
     motivo: str = ""
     origen: str = "monitoring_service"
+    fecha_inicio: str = ""
+    fecha_fin: str = ""
     auth_token: str = ""
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)

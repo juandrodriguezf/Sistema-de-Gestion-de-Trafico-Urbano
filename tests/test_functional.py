@@ -108,7 +108,7 @@ class TestValidation(unittest.TestCase):
             "tipo_sensor": "gps",
             "interseccion": "INT_C3K2",
             "timestamp": "2026-01-01T00:00:00Z",
-            "datos": {"densidad": 15.0, "velocidad_promedio": 40.0},
+            "datos": {"densidad": 15.0, "velocidad_promedio": 40.0, "nivel_congestion": "NORMAL"},
         }
         valid, reason = validate_sensor_event(data)
         self.assertTrue(valid, reason)

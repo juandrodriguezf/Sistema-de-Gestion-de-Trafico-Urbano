@@ -26,7 +26,7 @@ from shared.constants import (
     SENSOR_ESPIRA, SENSOR_CAMARA, SENSOR_GPS,
     REASON_CONGESTION, REASON_NORMAL, REASON_PRIORITY, REASON_MANUAL,
     ORIGIN_ANALYTICS, ORIGIN_MONITORING,
-    CMD_CONSULTA, CMD_OVERRIDE, CMD_LISTAR_SEMAFOROS,
+    CMD_CONSULTA, CMD_OVERRIDE, CMD_LISTAR_SEMAFOROS, CMD_CONSULTA_HISTORICA,
     TOPIC_SENSOR, TOPIC_HEARTBEAT,
     parse_semaforo_id, semaforo_topic, intersection_id,
 )
@@ -58,6 +58,11 @@ class AnalyticsService:
         # Almacena métricas más recientes: {interseccion_id: {Q, Vp, D, veh_min}}
         self.intersection_metrics = {}
         self._init_metrics()
+
+        # Seguimiento de estado previo y timers de retorno (15s)
+        self._prev_traffic_state: dict = {}
+        self._return_timers: dict = {}
+        self._return_lock = threading.Lock()
 
         # ─── Auth ───
         self.sensor_token_prefix = config.get("auth_tokens", {}).get("sensors_prefix", "")
@@ -124,6 +129,36 @@ class AnalyticsService:
             return CONGESTION
         return NORMAL
 
+    def _schedule_normal_return(self, col: int, row: int, light_pub: zmq.Socket):
+        """Programa el cambio de VERDE a ROJO después de 15s en condiciones normales."""
+        int_id = f"INT_C{col}K{row}"
+        with self._return_lock:
+            timer = self._return_timers.pop(int_id, None)
+            if timer:
+                timer.cancel()
+        timer = threading.Timer(15.0, self._revert_light, args=[col, row, light_pub])
+        timer.daemon = True
+        with self._return_lock:
+            self._return_timers[int_id] = timer
+        timer.start()
+        logger.info(f"TIMER: {int_id} volvera a ROJO en 15s")
+
+    def _revert_light(self, col: int, row: int, light_pub: zmq.Socket):
+        """Revierte el semáforo N de una intersección a ROJO."""
+        int_id = f"INT_C{col}K{row}"
+        sem_id = f"SEM_C{col}K{row}_N"
+        with self._return_lock:
+            self._return_timers.pop(int_id, None)
+        light_cmd = LightAction(
+            semaforo_id=sem_id,
+            nuevo_estado=ROJO,
+            razon=REASON_NORMAL,
+            origen=ORIGIN_ANALYTICS,
+        )
+        topic = semaforo_topic(col, row)
+        light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+        logger.info(f"TIMER: {sem_id} -> ROJO (normal reanudado)")
+
     def update_metrics(self, event: SensorEvent):
         """Actualiza las métricas de la intersección a partir de un evento de sensor."""
         int_id = event.interseccion
@@ -160,38 +195,63 @@ class AnalyticsService:
 
         # 3. Evalua reglas de tráfico
         estado = self.evaluate_traffic(int_id)
+        prev_state = self._prev_traffic_state.get(int_id, NORMAL)
+        self._prev_traffic_state[int_id] = estado
         metrics = self.intersection_metrics[int_id].copy()
 
         # 4. Determina la acción
         accion = None
+        parts = int_id.replace("INT_C", "").split("K")
+        col, row = int(parts[0]), int(parts[1])
+
         if estado == CONGESTION:
-            # Parsea la intersección para obtener la columna/fila para el ID del semáforo
-            parts = int_id.replace("INT_C", "").split("K")
-            col, row = int(parts[0]), int(parts[1])
-            sem_id = f"SEM_C{col}K{row}_N"  # Default: cambia luz norte
+            # Cancela cualquier timer de retorno pendiente
+            with self._return_lock:
+                timer = self._return_timers.pop(int_id, None)
+                if timer:
+                    timer.cancel()
 
+            # Ola verde vertical: cambia N a VERDE en esta y filas adyacentes
+            affected_rows = [row]
+            if row > 1:
+                affected_rows.append(row - 1)
+            if row < self.grid["rows"]:
+                affected_rows.append(row + 1)
+
+            changed = []
+            for r in affected_rows:
+                sem_id = f"SEM_C{col}K{r}_N"
+                light_cmd = LightAction(
+                    semaforo_id=sem_id,
+                    nuevo_estado=VERDE,
+                    razon=REASON_CONGESTION,
+                    origen=ORIGIN_ANALYTICS,
+                )
+                topic = semaforo_topic(col, r)
+                light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+                changed.append(sem_id)
+            logger.info(f"OLA VERDE C{col}: {changed}")
+
+            # Acción para la intersección principal
+            sem_id = f"SEM_C{col}K{row}_N"
             prev = self.replica_db.get_semaforo_state(sem_id)
-            estado_anterior = prev if prev in (VERDE, ROJO) else ROJO
-
             accion = {
                 "tipo": "CAMBIO_LUZ",
                 "semaforo_id": sem_id,
-                "estado_anterior": estado_anterior,
+                "estado_anterior": prev if prev in (VERDE, ROJO) else ROJO,
                 "estado_nuevo": VERDE,
                 "razon": REASON_CONGESTION,
                 "origen": ORIGIN_ANALYTICS,
             }
 
-            # Envía comando de cambio de luz
-            light_cmd = LightAction(
-                semaforo_id=sem_id,
-                nuevo_estado=VERDE,
-                razon=REASON_CONGESTION,
-                origen=ORIGIN_ANALYTICS,
-            )
-            topic = semaforo_topic(col, row)
-            light_pub.send_string(f"{topic} {light_cmd.to_json()}")
-            logger.info(f"CONGESTION en {int_id} → {sem_id} → VERDE")
+        elif estado == NORMAL and prev_state == CONGESTION:
+            # Programa el retorno de esta intersección
+            self._schedule_normal_return(col, row, light_pub)
+            # También de adyacentes si ya están en normal
+            if row > 1 and self._prev_traffic_state.get(f"INT_C{col}K{row-1}", NORMAL) == NORMAL:
+                self._schedule_normal_return(col, row - 1, light_pub)
+            if row < self.grid["rows"] and self._prev_traffic_state.get(f"INT_C{col}K{row+1}", NORMAL) == NORMAL:
+                self._schedule_normal_return(col, row + 1, light_pub)
 
         # 5. Construye el registro de estado de tráfico con trazabilidad
         traffic_state = TrafficState(
@@ -295,6 +355,24 @@ class AnalyticsService:
                     tipo="RESPUESTA",
                     datos={"semaforos": sems, "db_mode": mode_str},
                     mensaje=f"Lista de {len(sems)} semáforos (Modo: {mode_str})"
+                )
+
+            elif consulta == "CONSULTA_HISTORICA":
+                int_id = data.get("interseccion", "")
+                inicio = data.get("fecha_inicio", "")
+                fin = data.get("fecha_fin", "")
+                eventos = self.replica_db.get_events_between_dates(int_id, inicio, fin)
+                estados = self.replica_db.get_traffic_states_between_dates(int_id, inicio, fin)
+                acciones = self.replica_db.get_light_actions_between_dates(int_id, inicio, fin)
+                return MonitoringResponse(
+                    tipo="RESPUESTA",
+                    datos={
+                        "interseccion": int_id,
+                        "eventos": eventos,
+                        "estados_trafico": estados,
+                        "acciones_semaforo": acciones,
+                    },
+                    mensaje=f"Historial de {int_id}: {len(eventos)} eventos, {len(estados)} estados, {len(acciones)} acciones",
                 )
 
         elif tipo == CMD_OVERRIDE:

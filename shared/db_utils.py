@@ -291,3 +291,27 @@ class DatabaseManager:
         """Obtiene el número total de eventos almacenados."""
         row = self.conn.execute("SELECT COUNT(*) as cnt FROM eventos").fetchone()
         return row["cnt"]
+
+    def get_events_between_dates(self, interseccion_id: str, start: str, end: str) -> List[Dict[str, Any]]:
+        """Obtiene eventos de una intersección entre dos timestamps."""
+        rows = self.conn.execute(
+            "SELECT * FROM eventos WHERE interseccion_id = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 500",
+            (interseccion_id, start, end)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_traffic_states_between_dates(self, interseccion_id: str, start: str, end: str) -> List[Dict[str, Any]]:
+        """Obtiene estados de tráfico de una intersección entre dos timestamps."""
+        rows = self.conn.execute(
+            "SELECT * FROM estado_trafico WHERE interseccion_id = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 500",
+            (interseccion_id, start, end)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_light_actions_between_dates(self, interseccion_id: str, start: str, end: str) -> List[Dict[str, Any]]:
+        """Obtiene acciones de semáforos de una intersección entre dos timestamps."""
+        rows = self.conn.execute(
+            "SELECT a.* FROM acciones_semaforo a JOIN semaforos s ON a.semaforo_id = s.semaforo_id WHERE s.interseccion_id = ? AND a.timestamp >= ? AND a.timestamp <= ? ORDER BY a.timestamp DESC LIMIT 500",
+            (interseccion_id, start, end)
+        ).fetchall()
+        return [dict(r) for r in rows]

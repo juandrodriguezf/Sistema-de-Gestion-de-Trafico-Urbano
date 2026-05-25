@@ -6,7 +6,7 @@ Valida eventos de sensores, comandos de override e integridad de datos.
 import json
 import logging
 from typing import Tuple, Optional
-from shared.constants import SENSOR_TYPES, SENSOR_PREFIXES
+from shared.constants import SENSOR_TYPES, SENSOR_PREFIXES, SENSOR_GPS
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,10 @@ SENSOR_EVENT_REQUIRED = ["message_id", "sensor_id", "tipo_sensor", "interseccion
 SENSOR_DATA_FIELDS = {
     "espira": ["vehiculos_por_minuto"],
     "camara": ["longitud_cola"],
-    "gps": ["densidad", "velocidad_promedio"],
+    "gps": ["densidad", "velocidad_promedio", "nivel_congestion"],
 }
+
+NIVELES_CONGESTION = {"BAJA", "NORMAL", "ALTA"}
 
 OVERRIDE_REQUIRED = ["tipo", "semaforo_id", "nuevo_estado", "motivo", "origen", "auth_token"]
 
@@ -78,6 +80,8 @@ def validate_sensor_event(data: dict, registered_sensors: set = None,
 
     # 7. Validar rangos de datos
     for field, value in datos.items():
+        if field == "nivel_congestion":
+            continue
         if not isinstance(value, (int, float)):
             return False, f"Data field '{field}' must be numeric, got {type(value).__name__}"
         if value < 0:
@@ -87,7 +91,13 @@ def validate_sensor_event(data: dict, registered_sensors: set = None,
             if value < min_val or value > max_val:
                 return False, f"Data field '{field}' value {value} out of range [{min_val}, {max_val}]"
 
-    # 8. Validar formato de interseccion
+    # 8. Validar nivel_congestion para sensores GPS
+    if tipo == SENSOR_GPS:
+        nc = datos.get("nivel_congestion", "")
+        if nc not in NIVELES_CONGESTION:
+            return False, f"Invalid nivel_congestion '{nc}' for GPS. Must be one of {NIVELES_CONGESTION}"
+
+    # 9. Validar formato de interseccion
     interseccion = data.get("interseccion", "")
     if not interseccion.startswith("INT_C"):
         return False, f"Invalid interseccion format: '{interseccion}'. Expected 'INT_CxKy'"
@@ -148,11 +158,14 @@ def validate_query(data: dict) -> Tuple[bool, str]:
         return False, f"Invalid query type: {data['tipo']}"
 
     consulta = data.get("consulta", "")
-    valid_queries = ["ESTADO_INTERSECCION", "ESTADO_GENERAL", "LISTAR_SEMAFOROS"]
+    valid_queries = ["ESTADO_INTERSECCION", "ESTADO_GENERAL", "LISTAR_SEMAFOROS" , "CONSULTA_HISTORICA"]
     if consulta not in valid_queries:
         return False, f"Invalid consulta: '{consulta}'. Must be one of {valid_queries}"
 
     if consulta == "ESTADO_INTERSECCION" and not data.get("interseccion"):
         return False, "ESTADO_INTERSECCION requires 'interseccion' field"
+
+    if consulta == "CONSULTA_HISTORICA" and not data.get("interseccion"):
+        return False, "CONSULTA_HISTORICA requires 'interseccion' field"
 
     return True, ""

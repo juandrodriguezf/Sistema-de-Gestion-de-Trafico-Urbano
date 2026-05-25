@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from shared.models import MonitoringRequest, MonitoringResponse
 from shared.constants import (
     CMD_CONSULTA, CMD_OVERRIDE,
-    CMD_ESTADO_INTERSECCION, CMD_ESTADO_GENERAL, CMD_LISTAR_SEMAFOROS,
+    CMD_ESTADO_INTERSECCION, CMD_ESTADO_GENERAL, CMD_LISTAR_SEMAFOROS, CMD_CONSULTA_HISTORICA,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [Monitoring] %(levelname)s: %(message)s")
@@ -79,6 +79,18 @@ class MonitoringService:
         resp = self.send_request(req)
         return resp
 
+    def query_historical(self, interseccion: str, inicio: str, fin: str):
+        """Consulta histórica de una intersección entre dos fechas."""
+        req = MonitoringRequest(
+            tipo=CMD_CONSULTA,
+            consulta=CMD_CONSULTA_HISTORICA,
+            interseccion=interseccion,
+            fecha_inicio=inicio,
+            fecha_fin=fin,
+        )
+        resp = self.send_request(req)
+        return resp
+
     def send_override(self, semaforo_id: str, nuevo_estado: str, motivo: str = "manual"):
         """envia un comando de override manual"""
         req = MonitoringRequest(
@@ -115,7 +127,8 @@ class MonitoringService:
         print("  2. Estado general")
         print("  3. Listar semáforos")
         print("  4. Override manual         (ej: 4 SEM_C3K2_N VERDE ambulancia)")
-        print("  5. Salir")
+        print("  5. Consulta histórica      (ej: 5 INT_C1K1)")
+        print("  6. Salir")
         print()
 
         while True:
@@ -155,12 +168,26 @@ class MonitoringService:
                     resp = self.send_override(sem_id, estado, motivo)
                     self.print_response(resp)
 
-                elif cmd == "5" or cmd.lower() in ("exit", "quit", "salir"):
+                elif cmd == "5":
+                    int_id = input("  Intersección (ej: INT_C1K1): ").strip()
+                    print("  Deja en blanco para usar valores por defecto (última hora)")
+                    inicio = input("  Fecha inicio (ISO 8601, ej: 2026-05-24T00:00:00): ").strip()
+                    fin = input("  Fecha fin (ISO 8601, ej: 2026-05-24T23:59:59): ").strip()
+                    if not inicio:
+                        from datetime import datetime, timezone, timedelta
+                        inicio = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+                    if not fin:
+                        from datetime import datetime, timezone
+                        fin = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    resp = self.query_historical(int_id, inicio, fin)
+                    self.print_response(resp)
+
+                elif cmd == "6" or cmd.lower() in ("exit", "quit", "salir"):
                     print("Cerrando monitoreo...")
                     break
 
                 else:
-                    print("  Comando no reconocido. Use 1-5.")
+                    print("  Comando no reconocido. Use 1-6.")
 
             except EOFError:
                 print("\nCerrando monitoreo (EOF)...")

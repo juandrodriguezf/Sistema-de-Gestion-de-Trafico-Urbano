@@ -48,22 +48,31 @@ class SensorGPS(Sensor):
         self.v_max = vel.get("max", 60)
         self.spike_prob = cfg.get("congestion_spike_probability", 0.10)
 
+    @staticmethod
+    def _nivel_congestion(velocidad: float) -> str:
+        if velocidad < 10:
+            return "BAJA"
+        elif velocidad <= 39:
+            return "NORMAL"
+        else:
+            return "ALTA"
+
     def generate_data(self) -> dict:
         """
-        Genera datos de densidad y velocidad.
+        Genera datos de densidad, velocidad y nivel de congestión.
         Congestión = alta densidad + baja velocidad.
+        nivel_congestion: BAJA (<10), NORMAL (11-39), ALTA (>40)
         """
         if random.random() < self.spike_prob:
-            # congestión
             densidad = random.uniform(self.d_max * 0.5, self.d_max)
             velocidad = random.uniform(self.v_min, self.v_max * 0.4)
         else:
-            # tráfico normal
             densidad = random.uniform(self.d_min, self.d_max * 0.4)
             velocidad = random.uniform(self.v_max * 0.5, self.v_max)
         return {
             "densidad": round(densidad, 1),
             "velocidad_promedio": round(velocidad, 1),
+            "nivel_congestion": self._nivel_congestion(velocidad),
         }
 
 
