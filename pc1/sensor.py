@@ -45,6 +45,7 @@ class Sensor(ABC):
         self.auth_token = auth_token
         self.config = config or {}
         self.running = False
+        self._msg_counter = 0
 
         # ZMQ setup
         self.context = zmq.Context()
@@ -70,6 +71,7 @@ class Sensor(ABC):
 
     def create_event(self) -> SensorEvent:
         """Crea un SensorEvent con los datos generados."""
+        self._msg_counter += 1
         datos = self.generate_data()
         return SensorEvent(
             sensor_id=self.sensor_id,
@@ -86,7 +88,8 @@ class Sensor(ABC):
         # ZMQPUB envía topic + espacio + payload
         message = f"{topic} {payload}"
         self.socket.send_string(message)
-        logger.debug(f"[{self.sensor_id}] Publicado: {topic}")
+        eid_short = event.message_id[:8] if len(event.message_id) >= 8 else event.message_id
+        logger.info(f"[#{self._msg_counter:04d}] [{self.sensor_id}] ID:{eid_short} {event.datos}")
 
     def run(self):
         """Bucle principal del sensor — genera y publica eventos periódicamente."""

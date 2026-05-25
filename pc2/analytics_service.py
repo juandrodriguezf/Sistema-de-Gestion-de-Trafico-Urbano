@@ -193,12 +193,16 @@ class AnalyticsService:
             light_pub.send_string(f"{topic} {light_cmd.to_json()}")
             logger.info(f"CONGESTION en {int_id} → {sem_id} → VERDE")
 
-        # 5. Construye el registro de estado de tráfico
+        # 5. Construye el registro de estado de tráfico con trazabilidad
         traffic_state = TrafficState(
             interseccion=int_id,
             estado=estado,
             metricas=metrics,
             accion_tomada=accion,
+            original_event_id=event.message_id,
+            original_sensor_id=event.sensor_id,
+            original_tipo_sensor=event.tipo_sensor,
+            original_datos=json.dumps(event.datos, ensure_ascii=False),
         )
 
         # 6. Push a la BD

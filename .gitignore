@@ -9,5 +9,13 @@ venv/
 # Visual Studio Code
 .vscode/
 
+# Diagramas fuente (PlantUML) — solo se trackean los PNG renderizados
+docs/diagramas_plantUML/*.puml
+
 # Project Logs
 *.log
+
+# Run-time data (SQLite databases)
+data/
+
+.gitignore

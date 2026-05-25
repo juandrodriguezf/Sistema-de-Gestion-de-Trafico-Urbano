@@ -5,14 +5,15 @@ Plataforma distribuida para monitoreo y control de tráfico vehicular en tiempo 
 ## Arquitectura
 
 ```
-PC1 (Sensores)          PC2 (Analítica)           PC3 (Monitoreo)
-┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
-│ Espira  ─PUB─┤     │ Analytics Service │     │ Monitoring (CLI) │
-│ Cámara  ─PUB─┼──►  │   ├─ RuleEngine   │ ◄── │                  │
-│ GPS     ─PUB─┤  ┌──│   └─ Validator    │     │ Main DB          │
-│ BrokerZMQ    │  │  │ TrafficLightCtrl  │     │  ├─ Heartbeat     │
-│ (XPUB/XSUB)─┼──┘  │ Replica DB        │ ◄── │  └─ Replication   │
-└──────────────┘     └───────────────────┘     └──────────────────┘
+PC1 (Sensores)          PC2 (Analítica)           PC3 (Monitoreo + Visores)
+┌──────────────┐     ┌───────────────────┐     ┌──────────────────────┐
+│ Espira  ─PUB─┤     │ Analytics Service │     │ Monitoring (CLI)    │
+│ Cámara  ─PUB─┼──►  │   ├─ RuleEngine   │ ◄── │ LiveViewer (TUI)    │
+│ GPS     ─PUB─┤  ┌──│   └─ Validator    │     │ TraceabilityViewer  │
+│ BrokerZMQ    │  │  │ TrafficLightCtrl  │     │ Main DB             │
+│ (XPUB/XSUB)─┼──┘  │ Replica DB        │ ◄── │  ├─ Heartbeat       │
+└──────────────┘     └───────────────────┘     │  └─ Replication     │
+                                                └──────────────────────┘
 ```
 
 ## Requisitos
@@ -36,8 +37,11 @@ El sistema se puede ejecutar en un solo computador (**Simulación Local**) o en 
 Abrir **3 terminales** y ejecutar en este orden:
 
 ```bash
-# Terminal 1 — PC3 (Base de datos + Monitoreo)
-python pc3/start_pc3.py
+# Terminal 1 — PC3 (Base de datos + Monitoreo + Visores)
+python pc3/start_pc3.py                          # solo DB + CLI monitoreo
+python pc3/start_pc3.py --live                   # + dashboard TUI (LiveViewer)
+python pc3/start_pc3.py --trace                  # + tabla eventos (TraceabilityViewer)
+python pc3/start_pc3.py --live --trace           # ambos visores
 
 # Terminal 2 — PC2 (Analítica + Control)
 python pc2/start_pc2.py
@@ -98,10 +102,12 @@ entrega1_proyecto/
 │   ├── traffic_light_controller.py  # Control de semáforos
 │   ├── replica_db.py        # BD réplica
 │   └── start_pc2.py         # Launcher
-├── pc3/                     # PC3: Monitoreo + BD
+├── pc3/                     # PC3: Monitoreo + BD + Visores
 │   ├── main_db.py           # BD principal + heartbeat
 │   ├── monitoring_service.py # CLI de usuario
-│   └── start_pc3.py         # Launcher
+│   ├── live_viewer.py       # Dashboard TUI (rich, cada 2s)
+│   ├── traceability_viewer.py # Tabla `eventos` en vivo (cada 1s)
+│   └── start_pc3.py         # Launcher (flags: --live, --trace)
 ├── shared/                  # Utilidades compartidas
 │   ├── constants.py         # Nomenclatura y constantes
 │   ├── models.py            # Modelos de mensajes
@@ -113,8 +119,9 @@ entrega1_proyecto/
 │   ├── test_override.py
 │   ├── integration_stack_smoke.py
 │   └── test_data/
-├── docs/                    # Documentación UML
+├── docs/                    # Documentación
 │   ├── informe_entrega1.md
+│   ├── informe_entrega2.md
 │   └── diagramas_plantUML/
 │       ├── diagrama_despliegue.png
 │       ├── diagrama_componentes.png
@@ -137,7 +144,8 @@ entrega1_proyecto/
 
 ## Documentación
 
-- [Informe de Primera Entrega](docs/informe_entrega1.md)
+- [Informe de Primera Entrega](docs/informe_entrega1.md) — arquitectura base, patrones ZMQ, modelo de datos, failover
+- [Informe de Segunda Entrega](docs/informe_entrega2.md) — trazabilidad extremo a extremo, visores, métricas de rendimiento
 - [Diagrama de Despliegue](docs/diagramas_plantUML/diagrama_despliegue.png)
 - [Diagrama de Componentes](docs/diagramas_plantUML/diagrama_componentes.png)
 - [Diagrama de Clases](docs/diagramas_plantUML/diagrama_clases.png)

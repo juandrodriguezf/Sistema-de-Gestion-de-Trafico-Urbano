@@ -57,6 +57,11 @@ class TrafficState:
     accion_tomada: Optional[Dict[str, str]] = None
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
+    # Trazabilidad: datos originales del SensorEvent que originó este estado
+    original_event_id: str = ""
+    original_sensor_id: str = ""
+    original_tipo_sensor: str = ""
+    original_datos: str = ""  # JSON string del payload original del sensor
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)

@@ -3,7 +3,7 @@
         "columns": 1,
         "rows": 2
     },
-    "sensor_frequency_seconds": 5,
+    "sensor_frequency_seconds": 10,
     "load_generation": "random",
     "thresholds": {
         "Q_MAX": 5,

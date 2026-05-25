@@ -9,6 +9,7 @@ import os
 import json
 import time
 import logging
+import argparse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -17,6 +18,13 @@ logger = logging.getLogger("PC3-Launcher")
 
 
 def main():
+    parser = argparse.ArgumentParser(description="PC3 Launcher")
+    parser.add_argument("--live", action="store_true",
+                        help="Abrir Live Dashboard en una terminal separada")
+    parser.add_argument("--trace", action="store_true",
+                        help="Abrir Traceability Viewer (PC1↔PC3) en una terminal separada")
+    args = parser.parse_args()
+
     config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
     with open(config_path) as f:
         config = json.load(f)
@@ -39,9 +47,46 @@ def main():
     processes.append(("MainDB", proc))
     time.sleep(2)  # Dar tiempo a la DB para inicializarse y comenzar el heartbeat
 
-    # 2. Iniciar servicio de monitoreo (interactivo — se ejecuta en primer plano)
+    def _launch(script_name: str, label: str):
+        """Lanza un script en terminal separada."""
+        try:
+            if sys.platform == "win32":
+                proc = subprocess.Popen(
+                    [python, os.path.join(pc3_dir, script_name)],
+                    cwd=project_root,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+            else:
+                proc = subprocess.Popen(
+                    [python, os.path.join(pc3_dir, script_name)],
+                    cwd=project_root,
+                    start_new_session=True,
+                )
+            processes.append((label, proc))
+            return True
+        except Exception as e:
+            logger.warning(f"No se pudo lanzar {label}: {e}")
+            logger.info(f"Ejecútalo manualmente: python pc3/{script_name}")
+            return False
+
+    # 2. (Opcional) Live Dashboard en terminal separada
+    if args.live:
+        logger.info("Lanzando Live Dashboard...")
+        _launch("live_viewer.py", "LiveViewer")
+
+    # 3. (Opcional) Traceability Viewer en terminal separada
+    if args.trace:
+        logger.info("Lanzando Traceability Viewer...")
+        _launch("traceability_viewer.py", "TraceViewer")
+
+    # 4. Iniciar servicio de monitoreo (interactivo — se ejecuta en primer plano)
+    extras = []
+    if args.live:
+        extras.append("LiveViewer")
+    if args.trace:
+        extras.append("TraceViewer")
     logger.info("iniciando servicio de monitoreo...")
-    logger.info("PC3 iniciado: MainDB + MonitoringService")
+    logger.info(f"PC3 iniciado: MainDB + MonitoringService" + (f" + {' + '.join(extras)}" if extras else ""))
     logger.info("El cli de monitoreo se lanzará ahora...")
     print()
 

@@ -1,4 +1,4 @@
-# 🚦 Guía de Operación — Gestión Inteligente de Tráfico Urbano (Entrega 1)
+# 🚦 Guía de Operación — Gestión Inteligente de Tráfico Urbano
 
 Este documento detalla la configuración y ejecución del sistema distribuido de control de tráfico para la evaluación del proyecto.
 
@@ -26,11 +26,17 @@ Para que el sistema funcione de forma distribuida, cada PC debe contener la carp
 - **Archivo `config.json`**.
 *   **Ejecución:** `python pc2/start_pc2.py`
 
-### **PC3: Persistencia y Monitoreo (Nodo Maestro)**
-- **Carpeta `pc3/`**: Contiene la **Base de Datos Principal** y el servicio de Monitoreo (CLI).
+### **PC3: Persistencia, Monitoreo y Visores (Nodo Maestro)**
+- **Carpeta `pc3/`**: Contiene la **Base de Datos Principal**, el servicio de Monitoreo (CLI), el **LiveViewer** (dashboard TUI) y el **TraceabilityViewer** (tabla `eventos` en vivo).
 - **Carpeta `shared/`**: Motor de base de datos.
 - **Archivo `config.json`**.
-*   **Ejecución:** `python pc3/start_pc3.py`
+*   **Ejecución:**
+    ```bash
+    python pc3/start_pc3.py                          # solo DB + CLI monitoreo
+    python pc3/start_pc3.py --live                   # + dashboard TUI
+    python pc3/start_pc3.py --trace                  # + tabla eventos en vivo
+    python pc3/start_pc3.py --live --trace           # ambos visores
+    ```
 
 ---
 
@@ -47,7 +53,7 @@ Ideal para desarrollo o pruebas rápidas. Los 3 servicios ("PCs") correrán como
     "pc3_host": "localhost"
     ```
 2.  **Ejecución:** Abre **3 terminales** diferentes y ejecuta los scripts en el orden establecido:
-    - Terminal 1: `python pc3/start_pc3.py`
+    - Terminal 1: `python pc3/start_pc3.py` (opcional: `--live`, `--trace`)
     - Terminal 2: `python pc2/start_pc2.py`
     - Terminal 3: `python pc1/start_pc1.py`
     
@@ -93,6 +99,23 @@ El programa en PC3 abrirá una interfaz de línea de comandos tras iniciar la ba
 
 ---
 
+## 📺 Visores en Vivo (PC3)
+
+PC3 incluye dos visores opcionales que se lanzan con flags en `start_pc3.py`:
+
+### LiveViewer (`--live`)
+Dashboard TUI con **Rich** que se actualiza cada 2 segundos. Muestra tres paneles:
+- Eventos recientes de sensores (con hora local)
+- Estado actual de cada intersección
+- Estado de todos los semáforos
+
+### TraceabilityViewer (`--trace`)
+Tabla que refleja **literalmente** la tabla `eventos` de SQLite, actualizada cada 1 segundo. Cada fila nueva aparece resaltada en verde. El `evento_id` se trunca a 8 caracteres para coincidir con el ID mostrado en los logs de PC1.
+
+**Nota:** Ambos visores convierten automáticamente los timestamps UTC almacenados en la BD a la hora local del sistema.
+
+---
+
 ## 🛡️ Escenario de Fallo (Failover)
 
 Para demostrar la tolerancia a fallos exigida en la rúbrica:
@@ -109,9 +132,9 @@ Para demostrar la tolerancia a fallos exigida en la rúbrica:
 entrega1_proyecto/
 ├── pc1/ (start_pc1.py, broker.py, sensor_*.py)
 ├── pc2/ (start_pc2.py, analytics_service.py, traffic_light_controller.py, replica_db.py)
-├── pc3/ (start_pc3.py, main_db.py, monitoring_service.py)
+├── pc3/ (start_pc3.py, main_db.py, monitoring_service.py, live_viewer.py, traceability_viewer.py)
 ├── shared/ (db_utils.py, validation.py, models.py, constants.py)
 ├── data/ (Carpeta para bases de datos SQLite)
-├── docs/ (Diagramas UML de diseño)
+├── docs/ (Diagramas UML + informes)
 └── config.json (Configuración de IPs y Puertos)
 ```

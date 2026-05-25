@@ -92,14 +92,24 @@ class MainDBService:
             int_id = state.interseccion
             metrics = state.metricas
 
-            # Almacena el evento en la base de datos
-            event_id = str(uuid.uuid4())
+            # Trazabilidad: usa datos originales si están disponibles
+            if state.original_event_id:
+                event_id = state.original_event_id
+                sensor_id = state.original_sensor_id
+                tipo_sensor = state.original_tipo_sensor
+                datos = json.loads(state.original_datos) if state.original_datos else metrics
+            else:
+                event_id = str(uuid.uuid4())
+                sensor_id = "analytics"
+                tipo_sensor = "analysis"
+                datos = metrics
+
             self.db.insert_event(
                 evento_id=event_id,
-                sensor_id="analytics",
+                sensor_id=sensor_id,
                 interseccion_id=int_id,
-                tipo_sensor="analysis",
-                datos=metrics,
+                tipo_sensor=tipo_sensor,
+                datos=datos,
                 timestamp=state.timestamp,
             )
 
@@ -117,10 +127,10 @@ class MainDBService:
             # Publica la replicacion del evento
             self.publish_replication(rep_pub, "eventos", "INSERT", {
                 "evento_id": event_id,
-                "sensor_id": "analytics",
+                "sensor_id": sensor_id,
                 "interseccion_id": int_id,
-                "tipo_sensor": "analysis",
-                "datos": metrics,
+                "tipo_sensor": tipo_sensor,
+                "datos": datos,
                 "timestamp": state.timestamp,
             })
 
