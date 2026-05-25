@@ -151,13 +151,51 @@ Ver: `docs/diagramas_plantUML/`
 
 ---
 
-## 7. Configuración y Ejecución
+## 7. Broker Multihilos
 
-### 7.1 Requisitos
+### 7.1 Motivación
+
+El broker original (`pc1/broker.py`) utiliza `zmq.proxy()` que ejecuta un bucle de reenvío en C dentro de ZeroMQ. Si bien es eficiente, no permite personalizar el manejo de mensajes ni escalar a través de múltiples núcleos. Para la segunda entrega se implementó una versión multihilos (`pc1/broker_threaded.py`) como reemplazo directo.
+
+### 7.2 Implementación
+
+El `broker_threaded.py` reemplaza `zmq.proxy()` con 4 hilos Python que manejan el tráfico de mensajes:
+
+| Hilo | Socket | Dirección | Propósito |
+|------|--------|-----------|-----------|
+| `_frontend_reader` | XSUB (pollin) | Sensores → Broker | Lee eventos de sensores entrantes |
+| `_backend_writer` | XPUB | Broker → Analytics | Reenvía eventos al backend |
+| `_backend_reader` | XPUB (pollin) | Suscripciones XPUB | Lee notificaciones de suscripción (ZMQ_SUBSCRIBE) |
+| `_frontend_writer` | XSUB | Broker → Sensores | Reenvía suscripciones al frontend |
+
+**Flujo de datos:**
+
+```
+Sensor ──PUB──→ XSUB ──[frontend_reader]──Queue──→ [backend_writer]──XPUB──→ Analytics (SUB)
+                                                                ↑
+Suscripciones XPUB ──[backend_reader]──Queue──→ [frontend_writer]──XSUB──→ Sensor (PUB)
+```
+
+Cada hilo usa `zmq.Poller` con timeout y mantiene un flag `_running` para apagado controlado. Las subscripciones se reenvían del XPUB (backend) al XSUB (frontend) mediante los hilos `_backend_reader`/`_frontend_writer`; sin este reenvío bidireccional ningún evento llegaría a Analytics.
+
+### 7.3 Uso
+
+El launcher `pc1/start_pc1.py` acepta un flag para seleccionar el broker:
+
+```bash
+python pc1/start_pc1.py                # Broker original (zmq.proxy())
+python pc1/start_pc1.py --threaded     # Broker multihilos
+```
+
+---
+
+## 8. Configuración y Ejecución
+
+### 8.1 Requisitos
 
 Los mismos que la primera entrega: Python 3.9+, `pyzmq`, `rich`.
 
-### 7.2 Ejecución de PC3 con Visores
+### 8.2 Ejecución de PC3 con Visores
 
 ```bash
 # Solo DB + CLI de monitoreo
@@ -175,9 +213,68 @@ python pc3/start_pc3.py --live --trace
 
 ---
 
-## 8. Conclusiones
+## 9. Experimentos de Rendimiento
+
+### 9.1 Metodología
+
+Se implementó un script automatizado (`tests/run_experiments.py`) que ejecuta 4 combinaciones (2 escenarios × 2 diseños de broker) y mide:
+
+- **Eventos almacenados:** Número de registros en la tabla `eventos` de la BD principal tras 2 minutos de operación continua (más 15s de warmup inicial).
+- **Latencia de override:** Tiempo entre el envío de un comando `OVERRIDE` desde el monitoreo y la recepción de la respuesta de confirmación (promedio de 3 muestras).
+
+### 9.2 Escenarios
+
+| Escenario | Grid | Frecuencia | Sensores totales | Eventos teóricos (2 min) |
+|-----------|------|-----------|-----------------|------------------------|
+| 1 sensor c/u @10s | 1×1 (1 intersección) | 10 s | 3 (ESP, CAM, GPS) | 36 |
+| 2 sensores c/u @5s | 1×2 (2 intersecciones) | 5 s | 6 (ESP, CAM, GPS × 2) | 144 |
+
+### 9.3 Diseños de Broker
+
+| Diseño | Archivo | Descripción |
+|--------|---------|-------------|
+| Original | `pc1/broker.py` | `zmq.proxy()` estándar (un solo hilo) |
+| Multihilos | `pc1/broker_threaded.py` | Implementación manual con `zmq.Poller` + `threading` (4 hilos: frontend RX, frontend TX, backend RX, backend TX) |
+
+### 9.4 Resultados
+
+| Escenario | Broker | Eventos/2min | Latencia (ms) |
+|-----------|--------|-------------|--------------|
+| 1 sensor c/u @10s | Original | 36 | 3.7 |
+| 1 sensor c/u @10s | Multihilos | 36 | 2.2 |
+| 2 sensores c/u @5s | Original | 144 | 4.6 |
+| 2 sensores c/u @5s | Multihilos | 144 | 10.7 |
+
+### 9.5 Gráficas
+
+![Eventos almacenados en 2 minutos](../data/grafica_eventos.png)
+
+*Figura 1: Cantidad de eventos almacenados en la BD durante 2 minutos para cada combinación escenario × diseño.*
+
+![Latencia de override](../data/grafica_latencia.png)
+
+*Figura 2: Latencia promedio de override manual para cada combinación escenario × diseño.*
+
+### 9.6 Análisis
+
+**Pérdida de eventos: cero.** Ambos diseños capturan el 100 % de los eventos generados en ambos escenarios. El broker multihilos no introduce pérdida de mensajes gracias al reenvío correcto de suscripciones XPUB→XSUB mediante los hilos `_sub_reader` y `_sub_writer`.
+
+**Latencia en baja carga:** El broker multihilos es ~40 % más rápido (2.2 ms vs. 3.7 ms) porque los hilos adicionales permiten que el mensaje de override se procese sin esperar a que termine el ciclo de reenvío de eventos de sensores.
+
+**Latencia en alta carga:** El broker original es ~57 % más rápido (4.6 ms vs. 10.7 ms). Bajo carga alta, la contención por las `queue.Queue` compartidas y el GIL de Python penalizan al diseño multihilos. Cada mensaje atraviesa 4 colas intermedias (frontend RX→backend TX, backend RX→frontend TX, y subscripciones en ambos sentidos), lo que añade latencia bajo presión.
+
+**Escalabilidad:** El broker original (`zmq.proxy()`) ejecuta el reenvío en espacio de kernel de C (ZeroMQ internamente), por lo que escala mejor en un solo núcleo. El diseño multihilos ofrece la ventaja de poder distribuir la carga si se migrara a un patrón ROUTER/DEALER con workers independientes, pero en la implementación actual XPUB/XSUB con `Poller`+`Queue` el cuello de botella es la copia entre colas.
+
+**Recomendación:** Para la configuración actual (2×2, frecuencia 5–10s), el broker original con `zmq.proxy()` es suficiente. El broker multihilos es útil como demostración conceptual de escalabilidad y como base para futuras implementaciones con balanceo de carga (ROUTER/DEALER).
+
+---
+
+## 10. Conclusiones
 
 - La trazabilidad extremo a extremo se logró preservando el `message_id` del `SensorEvent` a través de toda la cadena (PC1 → Broker → PC2 → PC3), complementado con los campos `original_sensor_id`, `original_tipo_sensor` y `original_datos` en el `TrafficState`.
 - Los visores `LiveViewer` y `TraceabilityViewer` proporcionan dos perspectivas complementarias: un dashboard general de estado del sistema y una tabla cruda de eventos para depuración y verificación de trazabilidad.
 - La conversión UTC→hora local permite que los operadores vean los timestamps en su zona horaria sin modificar el almacenamiento en la BD (que sigue siendo UTC).
 - El contador secuencial `_msg_counter` y el ID truncado a 8 caracteres facilitan la correlación visual entre los logs de PC1 y el `TraceabilityViewer` en PC3.
+- El broker multihilos (`broker_threaded.py`) es un reemplazo funcional del broker original con `zmq.proxy()`, y demuestra cero pérdida de eventos en ambos escenarios de carga.
+- Bajo carga baja, el broker multihilos reduce la latencia de override en ~40 % (2.2 ms vs. 3.7 ms); bajo carga alta, el original es ~57 % más rápido (4.6 ms vs. 10.7 ms) debido a la contención por colas compartidas y el GIL.
+- El script `tests/run_experiments.py` automatiza la recolección de métricas para la Tabla 1 de la rúbrica y genera gráficas comparativas de eventos y latencia.

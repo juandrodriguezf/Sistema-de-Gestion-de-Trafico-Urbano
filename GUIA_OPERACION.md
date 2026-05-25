@@ -6,7 +6,7 @@ Este documento detalla la configuración y ejecución del sistema distribuido de
 
 - **Python 3.9+** instalado en las 3 máquinas o entornos virtuales.
 - **Librería ZeroMQ**: Instalable mediante `pip install pyzmq`. 
-- **Acceso de Red:** Asegurar que los puertos definidos en `config.json` estén abiertos (Default: 5555-5562).
+- **Acceso de Red:** Asegurar que los puertos definidos en `config.json` estén abiertos (Default: 5555-5561).
 
 ---
 
@@ -15,10 +15,16 @@ Este documento detalla la configuración y ejecución del sistema distribuido de
 Para que el sistema funcione de forma distribuida, cada PC debe contener la carpeta del proyecto, pero solo ejecutará programas específicos. **Todos los nodos necesitan la carpeta `shared/` y el archivo `config.json`**.
 
 ### **PC1: Ingesta y Broker**
-- **Carpeta `pc1/`**: Contiene el Broker (XPUB/XSUB) y los procesos de simulación de sensores.
+- **Carpeta `pc1/`**: Contiene dos versiones del Broker (XPUB/XSUB):
+  - `broker.py` — Original con `zmq.proxy()` (por defecto).
+  - `broker_threaded.py` — Versión multihilos con `Poller` + `Queue`.
 - **Carpeta `shared/`**: Lógica de validación y modelos.
-- **Archivo `config.json`**: Direcciones IP de los otros nodos.
-*   **Ejecución:** `python pc1/start_pc1.py`
+- **Archivo `config.json`**: Direcciones IP de los otros nodos y selección de broker.
+*   **Ejecución:**
+    ```bash
+    python pc1/start_pc1.py                # Broker original (zmq.proxy())
+    python pc1/start_pc1.py --threaded     # Broker multihilos
+    ```
 
 ### **PC2: Analítica y Control (PC de Respaldo)**
 - **Carpeta `pc2/`**: Contiene el motor de reglas de analítica, el controlador de semáforos y la **Base de Datos de Réplica**.
@@ -130,11 +136,12 @@ Para demostrar la tolerancia a fallos exigida en la rúbrica:
 
 ```text
 entrega1_proyecto/
-├── pc1/ (start_pc1.py, broker.py, sensor_*.py)
+├── pc1/ (start_pc1.py, broker.py, broker_threaded.py, sensor_*.py)
 ├── pc2/ (start_pc2.py, analytics_service.py, traffic_light_controller.py, replica_db.py)
 ├── pc3/ (start_pc3.py, main_db.py, monitoring_service.py, live_viewer.py, traceability_viewer.py)
 ├── shared/ (db_utils.py, validation.py, models.py, constants.py)
-├── data/ (Carpeta para bases de datos SQLite)
+├── tests/ (test_functional.py, run_experiments.py, ...)
+├── data/ (Bases de datos SQLite + gráficas de experimentos)
 ├── docs/ (Diagramas UML + informes)
 └── config.json (Configuración de IPs y Puertos)
 ```

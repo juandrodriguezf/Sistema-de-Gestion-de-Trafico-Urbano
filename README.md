@@ -11,9 +11,11 @@ PC1 (Sensores)          PC2 (Analítica)           PC3 (Monitoreo + Visores)
 │ Cámara  ─PUB─┼──►  │   ├─ RuleEngine   │ ◄── │ LiveViewer (TUI)    │
 │ GPS     ─PUB─┤  ┌──│   └─ Validator    │     │ TraceabilityViewer  │
 │ BrokerZMQ    │  │  │ TrafficLightCtrl  │     │ Main DB             │
-│ (XPUB/XSUB)─┼──┘  │ Replica DB        │ ◄── │  ├─ Heartbeat       │
-└──────────────┘     └───────────────────┘     │  └─ Replication     │
-                                                └──────────────────────┘
+│ (XPUB/XSUB) ┼──┘  │ Replica DB        │ ◄── │  ├─ Heartbeat       │
+│ ─o─ zmq.proxy()   └───────────────────┘     │  └─ Replication     │
+│ ─o─ threaded     ──── Experimentos ────     └──────────────────────┘
+│    (4 hilos)      tests/run_experiments.py
+└──────────────┘
 ```
 
 ## Requisitos
@@ -69,6 +71,27 @@ python -m pytest tests/ -q         # Toda la suite (funcional, failover, overrid
 python tests/integration_stack_smoke.py   # Opcional: humo PC3 MainDB → PC2 → PC1 (sin TTY en hijos: no usar PIPE sin drenar)
 ```
 
+## Experimentos de Rendimiento
+
+```bash
+python tests/run_experiments.py    # Ejecuta 4 combinaciones (2 escenarios × 2 diseños de broker)
+```
+
+Genera gráficas comparativas en `data/grafica_eventos.png` y `data/grafica_latencia.png`.
+Resultados detallados en [Informe Segunda Entrega → Experimentos](docs/informe_entrega2.md#9-experimentos-de-rendimiento).
+
+## Selección del Broker
+
+El launcher `pc1/start_pc1.py` acepta un flag para elegir el broker:
+
+```bash
+python pc1/start_pc1.py                # Broker original (zmq.proxy())
+python pc1/start_pc1.py --threaded     # Broker multihilos (4 hilos Poller+Queue)
+```
+
+- **original:** `zmq.proxy()` estándar, recomendado para producción.
+- **threaded:** 4 hilos con `Poller` + `Queue`, útil para experimentos y demostración de escalabilidad.
+
 ## Configuración
 
 Editar `config.json` para cambiar:
@@ -95,7 +118,8 @@ entrega1_proyecto/
 │   ├── sensor_espira.py     # Sensor de conteo vehicular
 │   ├── sensor_camara.py     # Sensor de cola
 │   ├── sensor_gps.py        # Sensor de densidad/velocidad
-│   ├── broker.py            # Proxy XPUB/XSUB
+│   ├── broker.py            # Proxy XPUB/XSUB (zmq.proxy())
+│   ├── broker_threaded.py   # Broker multihilos (Poller + Queue)
 │   └── start_pc1.py         # Launcher
 ├── pc2/                     # PC2: Analítica + Control
 │   ├── analytics_service.py # Motor de reglas
@@ -118,6 +142,7 @@ entrega1_proyecto/
 │   ├── test_failover.py
 │   ├── test_override.py
 │   ├── integration_stack_smoke.py
+│   ├── run_experiments.py   # Automatización de experimentos (Tabla 1)
 │   └── test_data/
 ├── docs/                    # Documentación
 │   ├── informe_entrega1.md
