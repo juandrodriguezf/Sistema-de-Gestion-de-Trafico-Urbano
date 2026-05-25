@@ -3,6 +3,8 @@ sensor.py - sensor base abstracto.
 Cada sensor es un proceso independiente que publica eventos al BrokerZMQ.
 """
 
+
+
 import zmq
 import json
 import time

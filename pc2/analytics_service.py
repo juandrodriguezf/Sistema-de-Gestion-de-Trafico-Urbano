@@ -101,9 +101,9 @@ class AnalyticsService:
                     prefix = SENSOR_PREFIXES[stype]
                     self.registered_sensors.add(f"{prefix}_C{c}K{r}")
 
-    # ═══════════════════════════════════════════
+    
     # Evaluación de reglas de tráfico
-    # ═══════════════════════════════════════════
+    
 
     def evaluate_traffic(self, interseccion: str) -> str:
         """
