@@ -54,13 +54,13 @@ python pc1/start_pc1.py
 
 ## Uso del Monitoreo (PC3)
 
-Una vez ejecutado, el CLI muestra (ajusta IDs a tu `grid` en `config.json`; por defecto 2×2):
+Una vez ejecutado, el CLI muestra (ajusta IDs a tu `grid` en `config.json`; por defecto 5×3):
 
 ```
-Monitoreo> 1 INT_C1K1          # Consultar estado de intersección
+Monitoreo> 1 INT_C2K2          # Consultar estado de intersección B2
 Monitoreo> 2                   # Estado general de toda la cuadrícula
 Monitoreo> 3                   # Listar todos los semáforos
-Monitoreo> 4 SEM_C1K1_N VERDE ambulancia   # Override manual
+Monitoreo> 4 SEM_C2K2_N VERDE ambulancia   # Override manual
 Monitoreo> 5                   # Salir
 ```
 
@@ -80,6 +80,61 @@ python tests/run_experiments.py    # Ejecuta 4 combinaciones (2 escenarios × 2 
 Genera gráficas comparativas en `data/grafica_eventos.png` y `data/grafica_latencia.png`.
 Resultados detallados en [Informe Segunda Entrega → Experimentos](docs/informe_entrega2.md#9-experimentos-de-rendimiento).
 
+## Demo de Sustentación
+
+Script automatizado que ejecuta un cronograma de 160 segundos demostrando todas las capacidades del sistema:
+
+```bash
+python demo_sustentacion/demo_sustentacion.py
+```
+
+### Cronograma
+
+| Tiempo | Evento | Descripción |
+|--------|--------|-------------|
+| t=60s | Congestión C2K2 | Envía valores que superan umbrales en C2K2 |
+| t=95s | Congestión C4K3 | Segunda congestión en C4K3 |
+| t=130s | Ambulancia fila 1 | Override manual de todos los semáforos K1 |
+| t=140s | Caída BD principal | Termina proceso main_db.py (failover a réplica) |
+| t=150s | Segunda ambulancia | Override con failover activo |
+| t=160s | Resumen | Muestra eventos ejecutados |
+
+### Ejecución
+
+**En 3 PCs:**
+```bash
+# PC1 (192.168.10.6)
+python pc1/start_pc1.py --threaded
+
+# PC2 (192.168.10.6)
+python pc2/start_pc2.py
+
+# PC3 (192.168.10.18)
+python pc3/start_pc3.py --live --trace
+
+# PC3 (después de que todos estén listos)
+python demo_sustentacion/demo_sustentacion.py
+```
+
+**En 1 PC (localhost):**
+```bash
+# Cambiar pc1_host, pc2_host, pc3_host a "localhost" en config.json
+python pc1/start_pc1.py --threaded
+python pc2/start_pc2.py
+python pc3/start_pc3.py --live --trace
+python demo_sustentacion/demo_sustentacion.py
+```
+
+### Queries durante la demo
+
+Desde PC3, se pueden hacer consultas mientras la demo ejecuta:
+```
+Monitoreo> 1 INT_C2K2    # Estado de C2K2 después de congestión
+Monitoreo> 1 INT_C4K3    # Estado de C4K3 después de congestión
+Monitoreo> 3             # Listar semáforos (fila 1 debería estar en VERDE)
+Monitoreo> 5 INT_C2K2    # Consulta histórica de C2K2
+```
+
 ## Selección del Broker
 
 El launcher `pc1/start_pc1.py` acepta un flag para elegir el broker:
@@ -98,7 +153,7 @@ Editar `config.json` para cambiar:
 
 | Parámetro | Descripción | Default |
 |-----------|-------------|---------|
-| `grid.columns` / `grid.rows` | Tamaño de cuadrícula | 2×2 (ver `config.json`) |
+| `grid.columns` / `grid.rows` | Tamaño de cuadrícula | 5×3 (ver `config.json`) |
 | `sensor_frequency_seconds` | Frecuencia de sensores | 5s (ver `config.json`) |
 | `thresholds.Q_MAX` | Cola máxima antes de congestión | 5 |
 | `thresholds.VP_MIN` | Velocidad mínima antes de congestión | 35 km/h |
@@ -113,6 +168,8 @@ Editar `config.json` para cambiar:
 entrega1_proyecto/
 ├── config.json              # Configuración del sistema
 ├── requirements.txt         # Dependencias Python
+├── demo_sustentacion/        # Demo automatizada para sustentación
+│   └── demo_sustentacion.py  # Cronograma de 160s
 ├── pc1/                     # PC1: Sensores + Broker
 │   ├── sensor.py            # Clase base abstracta
 │   ├── sensor_espira.py     # Sensor de conteo vehicular

@@ -35,6 +35,9 @@ EAST = "E"
 WEST = "W"
 DIRECTIONS = [NORTH, SOUTH, EAST, WEST]
 
+# ─── Labels de columnas para display ───
+COLUMN_LABELS = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
+
 # ─── Razones de acción ───
 REASON_CONGESTION = "congestion_detectada"
 REASON_PRIORITY = "prioridad"

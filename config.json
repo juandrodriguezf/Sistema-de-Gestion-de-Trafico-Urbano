@@ -1,7 +1,7 @@
 {
     "grid": {
-        "columns": 2,
-        "rows": 2
+        "columns": 5,
+        "rows": 3
     },
     "sensor_frequency_seconds": 10,
     "load_generation": "random",

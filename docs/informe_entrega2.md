@@ -222,6 +222,8 @@ Se implementó un script automatizado (`tests/run_experiments.py`) que ejecuta 4
 - **Eventos almacenados:** Número de registros en la tabla `eventos` de la BD principal tras 2 minutos de operación continua (más 15s de warmup inicial).
 - **Latencia de override:** Tiempo entre el envío de un comando `OVERRIDE` desde el monitoreo y la recepción de la respuesta de confirmación (promedio de 3 muestras).
 
+**Especificaciones del equipo de pruebas:** Los experimentos se ejecutaron en un solo computador ASUS Vivobook con procesador AMD Ryzen 7 (con gráficos AMD Radeon integrados), 16 GB de RAM, sistema operativo Windows 11, Python 3.10+, pyzmq ≥ 25.1.0 y sqlite3 (stdlib). Todas las IPs en `config.json` apuntan a `localhost` (127.0.0.1), por lo que la comunicación entre procesos es intra-máquina. La latencia se midió con `time.perf_counter()` y los eventos almacenados con `SELECT COUNT(*)` sobre la tabla `eventos`.
+
 ### 9.2 Escenarios
 
 | Escenario | Grid | Frecuencia | Sensores totales | Eventos teóricos (2 min) |

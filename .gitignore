@@ -21,3 +21,22 @@ data/
 .gitignore
 
 Proyecto_2026_10.md
+proyecto_enunciado.md
+
+# Documento LaTeX (informe segunda entrega)
+documento latex/
+
+documento_5paginas/
+# LaTeX auxiliary files (generados al compilar desde la raíz)
+*.aux
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.lof
+*.lot
+*.dvi
+*.ps
