@@ -62,6 +62,7 @@ class TrafficState:
     original_sensor_id: str = ""
     original_tipo_sensor: str = ""
     original_datos: str = ""  # JSON string del payload original del sensor
+    original_timestamp: str = ""  # timestamp original del SensorEvent (PC del sensor)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)

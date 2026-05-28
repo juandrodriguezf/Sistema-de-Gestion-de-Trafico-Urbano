@@ -74,8 +74,15 @@ Requerida para la sustentación final y pruebas de red.
     "pc2_host": "192.168.1.11",  // IP del PC de Analítica
     "pc3_host": "192.168.1.12"   // IP del PC de Persistencia
     ```
-    *Nota: El archivo `config.json` debe ser idéntico en las 3 máquinas.*
+     *Nota: El archivo `config.json` debe ser idéntico en las 3 máquinas.*
 3.  **Ejecución:** Sigue el mismo orden de encendido en cada máquina física.
+
+### **Opción C: Demo automatizada (160s)**
+Script `demo_sustentacion/demo_sustentacion.py` que simula congestión, ambulancias y failover automáticamente. El demo se conecta al broker de PC1 vía PUB y a Analytics vía REQ; requiere PC1 (broker), PC2 y PC3 funcionando.
+
+- **Con sensores reales:** `python pc1/start_pc1.py` (broker + 45 sensores)
+- **Solo broker (demo más limpio):** `python pc1/broker.py` (sin ruido de sensores en la DB)
+- **Ejecutar demo (desde PC3 o cualquier máquina con el proyecto):** `python demo_sustentacion/demo_sustentacion.py`
 
 ---
 

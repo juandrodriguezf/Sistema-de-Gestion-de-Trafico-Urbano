@@ -97,7 +97,7 @@ Ambos visores usan la función `fmt_time()` que:
 3. Convierte a la zona horaria local con `dt.astimezone()`.
 4. Formatea como `HH:MM:SS`.
 
-Esto corrige el problema donde los timestamps se mostraban en UTC (ej. 01:37) en lugar de la hora local (ej. 08:37 para UTC-7).
+Esto corrige el problema donde los timestamps se mostraban en UTC (ej. 01:37) en lugar de la hora local (ej. 06:37 para UTC-5).
 
 ---
 

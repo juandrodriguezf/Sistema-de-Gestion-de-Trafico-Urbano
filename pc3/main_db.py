@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from shared.models import TrafficState, ReplicationMessage, Heartbeat
+from shared.models import TrafficState, ReplicationMessage, Heartbeat, _now
 from shared.db_utils import DatabaseManager
 from shared.constants import TOPIC_SYNC, TOPIC_HEARTBEAT
 
@@ -104,13 +104,15 @@ class MainDBService:
                 tipo_sensor = "analysis"
                 datos = metrics
 
+            ts = state.timestamp
+
             self.db.insert_event(
                 evento_id=event_id,
                 sensor_id=sensor_id,
                 interseccion_id=int_id,
                 tipo_sensor=tipo_sensor,
                 datos=datos,
-                timestamp=state.timestamp,
+                timestamp=ts,
             )
 
             # Almacena el estado del trafico
@@ -121,7 +123,7 @@ class MainDBService:
                 D=metrics.get("D", 0),
                 veh_min=metrics.get("vehiculos_por_minuto", 0),
                 estado=state.estado,
-                timestamp=state.timestamp,
+                timestamp=ts,
             )
 
             # Publica la replicacion del evento
@@ -131,7 +133,7 @@ class MainDBService:
                 "interseccion_id": int_id,
                 "tipo_sensor": tipo_sensor,
                 "datos": datos,
-                "timestamp": state.timestamp,
+                "timestamp": ts,
             })
 
             # Publica la replicacion del estado del trafico
@@ -142,7 +144,7 @@ class MainDBService:
                 "D": metrics.get("D", 0),
                 "vehiculos_por_minuto": metrics.get("vehiculos_por_minuto", 0),
                 "estado": state.estado,
-                "timestamp": state.timestamp,
+                "timestamp": ts,
             })
 
             # Si se tomo una accion, se almacena y se replica
@@ -162,9 +164,9 @@ class MainDBService:
                     estado_nuevo=estado_new,
                     razon=razon,
                     origen=origen,
-                    timestamp=state.timestamp,
+                    timestamp=ts,
                 )
-                self.db.update_semaforo(sem_id, estado_new, state.timestamp)
+                self.db.update_semaforo(sem_id, estado_new, ts)
 
                 self.publish_replication(rep_pub, "acciones_semaforo", "INSERT", {
                     "accion_id": accion_id,
@@ -173,12 +175,12 @@ class MainDBService:
                     "estado_nuevo": estado_new,
                     "razon": razon,
                     "origen": origen,
-                    "timestamp": state.timestamp,
+                    "timestamp": ts,
                 })
                 self.publish_replication(rep_pub, "semaforos", "UPDATE", {
                     "semaforo_id": sem_id,
                     "estado_actual": estado_new,
-                    "timestamp": state.timestamp,
+                    "timestamp": ts,
                 })
 
         except Exception as e:

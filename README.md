@@ -61,7 +61,8 @@ Monitoreo> 1 B2              # Consultar estado de intersección B2
 Monitoreo> 2                   # Estado general de toda la cuadrícula
 Monitoreo> 3                   # Listar todos los semáforos
 Monitoreo> 4 SEM_B2_N VERDE ambulancia   # Override manual
-Monitoreo> 5                   # Salir
+Monitoreo> 5 A1                # Consulta histórica de A1
+Monitoreo> 6                   # Salir
 ```
 
 ## Tests
@@ -87,6 +88,8 @@ Script automatizado que ejecuta un cronograma de 160 segundos demostrando todas 
 ```bash
 python demo_sustentacion/demo_sustentacion.py
 ```
+
+> **Nota:** El demo se conecta al broker de PC1 vía PUB (puerto 5555). Si no se necesita el ruido de los sensores reales en la base de datos, se puede correr solo el broker sin los 45 sensores: `python pc1/broker.py` en lugar de `python pc1/start_pc1.py`.
 
 ### Cronograma
 
@@ -159,7 +162,7 @@ Editar `config.json` para cambiar:
 | `thresholds.VP_MIN` | Velocidad mínima antes de congestión | 35 km/h |
 | `thresholds.D_MAX` | Densidad máxima antes de congestión | 20 veh/km |
 | `heartbeat_interval_seconds` | Intervalo de heartbeat | 5s |
-| `heartbeat_timeout_seconds` | Timeout para failover | 15s |
+| `heartbeat_timeout_seconds` | Timeout para failover | 8s |
 | `pc*_host` | IPs de cada PC | localhost |
 
 ## Estructura del Proyecto

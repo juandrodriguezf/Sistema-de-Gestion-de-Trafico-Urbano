@@ -21,9 +21,9 @@
         "db_replication": 5560,
         "heartbeat": 5561
     },
-    "pc1_host": "localhost",
-    "pc2_host": "localhost",
-    "pc3_host": "localhost",
+    "pc1_host": "192.168.10.6",
+    "pc2_host": "192.168.10.6",
+    "pc3_host": "192.168.10.18",
     "data_ranges": {
         "vehiculos_por_minuto": {
             "min": 0,

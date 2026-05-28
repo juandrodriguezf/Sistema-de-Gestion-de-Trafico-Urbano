@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from shared.models import (
     SensorEvent, TrafficState, LightAction,
-    MonitoringRequest, MonitoringResponse, Heartbeat
+    MonitoringRequest, MonitoringResponse, Heartbeat, _now
 )
 from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION, PRIORIDAD,
@@ -216,38 +216,40 @@ class AnalyticsService:
                 if timer:
                     timer.cancel()
 
-            # Ola verde vertical: cambia N a VERDE en esta y filas adyacentes
-            affected_rows = [row]
-            if row > 1:
-                affected_rows.append(row - 1)
-            if row < self.grid["rows"]:
-                affected_rows.append(row + 1)
+            # Solo aplicar ola verde en la transicion normal → congestion
+            if prev_state != CONGESTION:
+                # Ola verde vertical: cambia N a VERDE en esta y filas adyacentes
+                affected_rows = [row]
+                if row > 1:
+                    affected_rows.append(row - 1)
+                if row < self.grid["rows"]:
+                    affected_rows.append(row + 1)
 
-            changed = []
-            for r in affected_rows:
-                sem_id = f"SEM_C{col}K{r}_N"
-                light_cmd = LightAction(
-                    semaforo_id=sem_id,
-                    nuevo_estado=VERDE,
-                    razon=REASON_CONGESTION,
-                    origen=ORIGIN_ANALYTICS,
-                )
-                topic = semaforo_topic(col, r)
-                light_pub.send_string(f"{topic} {light_cmd.to_json()}")
-                changed.append(sem_id)
-            logger.info(f"OLA VERDE C{col}: {changed}")
+                changed = []
+                for r in affected_rows:
+                    sem_id = f"SEM_C{col}K{r}_N"
+                    light_cmd = LightAction(
+                        semaforo_id=sem_id,
+                        nuevo_estado=VERDE,
+                        razon=REASON_CONGESTION,
+                        origen=ORIGIN_ANALYTICS,
+                    )
+                    topic = semaforo_topic(col, r)
+                    light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+                    changed.append(sem_id)
+                logger.info(f"OLA VERDE C{col}: {changed}")
 
-            # Acción para la intersección principal
-            sem_id = f"SEM_C{col}K{row}_N"
-            prev = self.replica_db.get_semaforo_state(sem_id)
-            accion = {
-                "tipo": "CAMBIO_LUZ",
-                "semaforo_id": sem_id,
-                "estado_anterior": prev if prev in (VERDE, ROJO) else ROJO,
-                "estado_nuevo": VERDE,
-                "razon": REASON_CONGESTION,
-                "origen": ORIGIN_ANALYTICS,
-            }
+                # Acción para la intersección principal
+                sem_id = f"SEM_C{col}K{row}_N"
+                prev = self.replica_db.get_semaforo_state(sem_id)
+                accion = {
+                    "tipo": "CAMBIO_LUZ",
+                    "semaforo_id": sem_id,
+                    "estado_anterior": prev if prev in (VERDE, ROJO) else ROJO,
+                    "estado_nuevo": VERDE,
+                    "razon": REASON_CONGESTION,
+                    "origen": ORIGIN_ANALYTICS,
+                }
 
         elif estado == NORMAL and prev_state == CONGESTION:
             # Programa el retorno de esta intersección
@@ -268,6 +270,7 @@ class AnalyticsService:
             original_sensor_id=event.sensor_id,
             original_tipo_sensor=event.tipo_sensor,
             original_datos=json.dumps(event.datos, ensure_ascii=False),
+            original_timestamp=event.timestamp,
         )
 
         # 6. Push a la BD
@@ -281,13 +284,14 @@ class AnalyticsService:
         # 7. También almacena el evento en la BD réplica si está en modo de failover
         if self.use_replica:
             try:
+                ts = _now()
                 self.replica_db.insert_event(
                     event.message_id, event.sensor_id, event.interseccion,
-                    event.tipo_sensor, event.datos, event.timestamp
+                    event.tipo_sensor, event.datos, ts
                 )
                 self.replica_db.insert_traffic_state(
                     int_id, metrics["Q"], metrics["Vp"], metrics["D"],
-                    metrics["vehiculos_por_minuto"], estado, traffic_state.timestamp
+                    metrics["vehiculos_por_minuto"], estado, ts
                 )
             except Exception as e:
                 logger.error(f"Error al escribir en la BD réplica: {e}")
@@ -466,7 +470,7 @@ class AnalyticsService:
                 )
         else:
             try:
-                ts = traffic_state.timestamp
+                ts = _now()
                 self.replica_db.insert_traffic_state(
                     int_id,
                     metrics["Q"],
