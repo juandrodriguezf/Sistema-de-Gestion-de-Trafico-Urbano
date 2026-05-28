@@ -84,8 +84,9 @@ class DatabaseManager:
 
     def connect(self):
         """Abre la conexion a la base de datos e inicializa el esquema."""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=5)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA_SQL)
         self.conn.commit()
         logger.info(f"Base de datos conectada: {self.db_path}")
