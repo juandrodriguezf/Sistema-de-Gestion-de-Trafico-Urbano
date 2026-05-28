@@ -90,12 +90,12 @@ Todos los mensajes usan JSON con campos obligatorios `message_id` y `timestamp`.
 ```json
 {
   "message_id": "uuid-v4",
-  "sensor_id": "ESP_C5K3",
+  "sensor_id": "ESP_E3",
   "tipo_sensor": "espira",
-  "interseccion": "INT_C5K3",
+  "interseccion": "INT_E3",
   "timestamp": "2026-04-01T22:00:00.000Z",
   "datos": {"vehiculos_por_minuto": 12},
-  "auth_token": "sensor-token-ESP_C5K3"
+  "auth_token": "sensor-token-ESP_E3"
 }
 ```
 

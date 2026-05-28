@@ -37,6 +37,36 @@ DIRECTIONS = [NORTH, SOUTH, EAST, WEST]
 
 # ─── Labels de columnas para display ───
 COLUMN_LABELS = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
+LABEL_TO_COL = {v: k for k, v in COLUMN_LABELS.items()}
+
+
+def display_intersection(col: int, row: int) -> str:
+    """Convierte (2, 2) → B2 para display."""
+    return f"{COLUMN_LABELS.get(col, f'C{col}')}{row}"
+
+
+def display_semaforo(col: int, row: int, direction: str) -> str:
+    """Convierte (2, 2, 'N') → SEM_B2_N para display."""
+    return f"SEM_{display_intersection(col, row)}_{direction}"
+
+
+def parse_display_intersection(label: str) -> Tuple[int, int]:
+    """Convierte B2 → (2, 2). Acepta tanto A1 como INT_A1."""
+    label = label.replace("INT_", "")
+    col_letter = label[0].upper()
+    row = int(label[1:])
+    return LABEL_TO_COL[col_letter], row
+
+
+def parse_display_semaforo(label: str) -> Optional[Tuple[int, int, str]]:
+    """Convierte SEM_B2_N → (2, 2, 'N')."""
+    m = re.match(r"^SEM_([A-E])(\d+)_([NSEW])$", label)
+    if not m:
+        return None
+    col = LABEL_TO_COL[m.group(1)]
+    row = int(m.group(2))
+    direction = m.group(3)
+    return col, row, direction
 
 # ─── Razones de acción ───
 REASON_CONGESTION = "congestion_detectada"

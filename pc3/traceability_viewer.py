@@ -14,6 +14,7 @@ from threading import Thread, Event
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from shared.constants import parse_intersection, display_intersection
 from rich.live import Live
 from rich.table import Table
 from rich.panel import Panel
@@ -39,6 +40,15 @@ def fmt_time(ts: str) -> str:
 
 def _abbrev_uuid(u: str) -> str:
     return u[:8] if u and len(u) > 8 else u
+
+
+def fmt_intersection(int_id: str) -> str:
+    """Convierte INT_C2K2 → B2 para display."""
+    try:
+        col, row = parse_intersection(int_id)
+        return display_intersection(col, row)
+    except Exception:
+        return int_id
 
 
 def build_events_table(cursor) -> Table:
@@ -80,7 +90,7 @@ def build_events_table(cursor) -> Table:
         table.add_row(
             Text(eid_short, style=style),
             Text(r["sensor_id"], style=style),
-            Text(r["interseccion_id"], style=style),
+            Text(fmt_intersection(r["interseccion_id"]), style=style),
             Text(r["tipo_sensor"], style=style),
             Text(payload, style=style),
             Text(fmt_time(r["timestamp"]), style=style),

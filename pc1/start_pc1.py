@@ -15,6 +15,8 @@ import argparse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from shared.constants import display_intersection
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [PC1-Launcher] %(levelname)s: %(message)s")
 logger = logging.getLogger("PC1-Launcher")
 
@@ -71,7 +73,7 @@ def main():
                     [python, script, str(c), str(r), broker_host, str(broker_port)],
                     cwd=os.path.join(pc1_dir, ".."),
                 )
-                name = f"{tipo.upper()}_C{c}K{r}"
+                name = f"{tipo.upper()}_{display_intersection(c, r)}"
                 processes.append((name, proc))
                 total_sensors += 1
 

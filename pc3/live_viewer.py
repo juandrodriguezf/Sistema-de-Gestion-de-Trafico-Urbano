@@ -15,6 +15,7 @@ from threading import Thread, Event
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from shared.constants import parse_intersection, display_intersection, parse_semaforo_id, display_semaforo
 from rich.live import Live
 from rich.table import Table
 from rich.layout import Layout
@@ -39,6 +40,27 @@ def fmt_time(ts: str) -> str:
         return dt_local.strftime("%H:%M:%S")
     except Exception:
         return ts[-8:] if len(ts) >= 8 else ts
+
+
+def fmt_intersection(int_id: str) -> str:
+    """Convierte INT_C2K2 → B2 para display."""
+    try:
+        col, row = parse_intersection(int_id)
+        return display_intersection(col, row)
+    except Exception:
+        return int_id
+
+
+def fmt_semaforo(sem_id: str) -> str:
+    """Convierte SEM_C2K2_N → SEM_B2_N para display."""
+    try:
+        parsed = parse_semaforo_id(sem_id)
+        if parsed:
+            col, row, direction = parsed
+            return display_semaforo(col, row, direction)
+    except Exception:
+        pass
+    return sem_id
 
 
 def build_tables(cursor) -> Layout:
@@ -118,7 +140,7 @@ def _build_events_table(cursor) -> Panel:
         table.add_row(
             str(i),
             r["sensor_id"],
-            r["interseccion_id"],
+            fmt_intersection(r["interseccion_id"]),
             r["tipo_sensor"],
             payload,
             fmt_time(r["timestamp"]),
@@ -159,7 +181,7 @@ def _build_intersections_table(cursor) -> Panel:
 
         color = "red" if estado == "congestion" else "green"
         table.add_row(
-            int_id,
+            fmt_intersection(int_id),
             Text(estado, style=f"bold {color}"),
             f"{last['Q']:.1f}" if last else "-",
             f"{last['Vp']:.1f}" if last else "-",
@@ -189,7 +211,7 @@ def _build_lights_table(cursor) -> Panel:
     for r in rows:
         color = "green" if r["estado_actual"] == "VERDE" else "red"
         table.add_row(
-            r["semaforo_id"],
+            fmt_semaforo(r["semaforo_id"]),
             r["direccion"],
             Text(r["estado_actual"], style=f"bold {color}"),
             fmt_time(r["ultima_accion"]),

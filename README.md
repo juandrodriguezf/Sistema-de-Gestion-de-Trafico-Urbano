@@ -57,10 +57,10 @@ python pc1/start_pc1.py
 Una vez ejecutado, el CLI muestra (ajusta IDs a tu `grid` en `config.json`; por defecto 5×3):
 
 ```
-Monitoreo> 1 INT_C2K2          # Consultar estado de intersección B2
+Monitoreo> 1 B2              # Consultar estado de intersección B2
 Monitoreo> 2                   # Estado general de toda la cuadrícula
 Monitoreo> 3                   # Listar todos los semáforos
-Monitoreo> 4 SEM_C2K2_N VERDE ambulancia   # Override manual
+Monitoreo> 4 SEM_B2_N VERDE ambulancia   # Override manual
 Monitoreo> 5                   # Salir
 ```
 
@@ -92,9 +92,9 @@ python demo_sustentacion/demo_sustentacion.py
 
 | Tiempo | Evento | Descripción |
 |--------|--------|-------------|
-| t=60s | Congestión C2K2 | Envía valores que superan umbrales en C2K2 |
-| t=95s | Congestión C4K3 | Segunda congestión en C4K3 |
-| t=130s | Ambulancia fila 1 | Override manual de todos los semáforos K1 |
+| t=60s | Congestión B2 | Envía valores que superan umbrales en B2 |
+| t=95s | Congestión D3 | Segunda congestión en D3 |
+| t=130s | Ambulancia fila 1 | Override manual de todos los semáforos fila 1 |
 | t=140s | Caída BD principal | Termina proceso main_db.py (failover a réplica) |
 | t=150s | Segunda ambulancia | Override con failover activo |
 | t=160s | Resumen | Muestra eventos ejecutados |
@@ -129,10 +129,10 @@ python demo_sustentacion/demo_sustentacion.py
 
 Desde PC3, se pueden hacer consultas mientras la demo ejecuta:
 ```
-Monitoreo> 1 INT_C2K2    # Estado de C2K2 después de congestión
-Monitoreo> 1 INT_C4K3    # Estado de C4K3 después de congestión
-Monitoreo> 3             # Listar semáforos (fila 1 debería estar en VERDE)
-Monitoreo> 5 INT_C2K2    # Consulta histórica de C2K2
+Monitoreo> 1 B2       # Estado de B2 después de congestión
+Monitoreo> 1 D3       # Estado de D3 después de congestión
+Monitoreo> 3           # Listar semáforos (fila 1 debería estar en VERDE)
+Monitoreo> 5 B2       # Consulta histórica de B2
 ```
 
 ## Selección del Broker

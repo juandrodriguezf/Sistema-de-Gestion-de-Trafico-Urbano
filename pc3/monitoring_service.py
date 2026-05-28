@@ -6,6 +6,7 @@ import zmq
 import json
 import sys
 import os
+import re
 import logging
 from datetime import datetime, timezone
 
@@ -15,6 +16,8 @@ from shared.models import MonitoringRequest, MonitoringResponse
 from shared.constants import (
     CMD_CONSULTA, CMD_OVERRIDE,
     CMD_ESTADO_INTERSECCION, CMD_ESTADO_GENERAL, CMD_LISTAR_SEMAFOROS, CMD_CONSULTA_HISTORICA,
+    intersection_id, parse_display_intersection, display_intersection,
+    parse_display_semaforo, display_semaforo,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [Monitoring] %(levelname)s: %(message)s")
@@ -103,14 +106,32 @@ class MonitoringService:
         resp = self.send_request(req)
         return resp
 
+    _RE_INT = re.compile(r"^INT_C(\d+)K(\d+)$")
+    _RE_SEM = re.compile(r"^SEM_C(\d+)K(\d+)_(N|S|E|W)$")
+
+    def _to_display(self, obj):
+        if isinstance(obj, str):
+            m = self._RE_INT.match(obj)
+            if m:
+                return display_intersection(int(m.group(1)), int(m.group(2)))
+            m = self._RE_SEM.match(obj)
+            if m:
+                return display_semaforo(int(m.group(1)), int(m.group(2)), m.group(3))
+            return obj
+        if isinstance(obj, dict):
+            return {self._to_display(k): self._to_display(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._to_display(i) for i in obj]
+        return obj
+
     def print_response(self, resp: MonitoringResponse):
         """Imprime la respuesta de forma bonita"""
         print(f"\n{'='*60}")
         print(f"  Tipo: {resp.tipo}")
-        print(f"  Mensaje: {resp.mensaje}")
+        print(f"  Mensaje: {self._to_display(resp.mensaje)}")
         if resp.datos:
             print(f"  Datos:")
-            print(json.dumps(resp.datos, indent=4, ensure_ascii=False))
+            print(json.dumps(self._to_display(resp.datos), indent=4, ensure_ascii=False))
         print(f"  Timestamp: {resp.timestamp}")
         print(f"{'='*60}\n")
 
@@ -123,11 +144,11 @@ class MonitoringService:
         print("  Plataforma de Gestión Inteligente")
         print("="*60)
         print("\nComandos disponibles:")
-        print("  1. Estado de intersección  (ej: 1 INT_C3K2)")
+        print("  1. Estado de intersección  (ej: 1 B2)")
         print("  2. Estado general")
         print("  3. Listar semáforos")
-        print("  4. Override manual         (ej: 4 SEM_C3K2_N VERDE ambulancia)")
-        print("  5. Consulta histórica      (ej: 5 INT_C1K1)")
+        print("  4. Override manual         (ej: 4 SEM_B2_N VERDE ambulancia)")
+        print("  5. Consulta histórica      (ej: 5 A1)")
         print("  6. Salir")
         print()
 
@@ -142,9 +163,12 @@ class MonitoringService:
 
                 if cmd == "1":
                     if len(parts) < 2:
-                        int_id = input("  Intersección (ej: INT_C3K2): ").strip()
+                        label = input("  Intersección (ej: B2): ").strip()
                     else:
-                        int_id = parts[1]
+                        label = parts[1]
+                    # Convertir de display (B2) a interno (INT_C2K2)
+                    col, row = parse_display_intersection(label)
+                    int_id = intersection_id(col, row)
                     resp = self.query_intersection(int_id)
                     self.print_response(resp)
 
@@ -158,18 +182,28 @@ class MonitoringService:
 
                 elif cmd == "4":
                     if len(parts) >= 3:
-                        sem_id = parts[1]
+                        sem_label = parts[1]
                         estado = parts[2]
                         motivo = parts[3] if len(parts) > 3 else "manual"
                     else:
-                        sem_id = input("  Semáforo ID (ej: SEM_C3K2_N): ").strip()
+                        sem_label = input("  Semáforo ID (ej: SEM_B2_N): ").strip()
                         estado = input("  Nuevo estado (VERDE/ROJO): ").strip()
                         motivo = input("  Motivo (manual/ambulancia): ").strip() or "manual"
+                    # Convertir de display (SEM_B2_N) a interno (SEM_C2K2_N)
+                    parsed = parse_display_semaforo(sem_label)
+                    if parsed:
+                        col, row, direction = parsed
+                        sem_id = f"SEM_C{col}K{row}_{direction}"
+                    else:
+                        sem_id = sem_label
                     resp = self.send_override(sem_id, estado, motivo)
                     self.print_response(resp)
 
                 elif cmd == "5":
-                    int_id = input("  Intersección (ej: INT_C1K1): ").strip()
+                    label = input("  Intersección (ej: A1): ").strip()
+                    # Convertir de display (A1) a interno (INT_C1K1)
+                    col, row = parse_display_intersection(label)
+                    int_id = intersection_id(col, row)
                     print("  Deja en blanco para usar valores por defecto (última hora)")
                     inicio = input("  Fecha inicio (ISO 8601, ej: 2026-05-24T00:00:00): ").strip()
                     fin = input("  Fecha fin (ISO 8601, ej: 2026-05-24T23:59:59): ").strip()

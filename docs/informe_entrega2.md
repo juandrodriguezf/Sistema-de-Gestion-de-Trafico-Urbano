@@ -106,7 +106,7 @@ Esto corrige el problema donde los timestamps se mostraban en UTC (ej. 01:37) en
 Cada instancia de `Sensor` en PC1 mantiene un `_msg_counter` que se incrementa en `create_event()`. El log de publicación muestra:
 
 ```
-2026-05-24 20:37:10,000 [pc1.sensor] INFO: [#0050] [CAM_C1K2] ID:a1b2c3d4 {'longitud_cola': 20}
+2026-05-24 20:37:10,000 [pc1.sensor] INFO: [#0050] [CAM_B2] ID:a1b2c3d4 {'longitud_cola': 20}
 ```
 
 Formato: `[#NNNN] [sensor_id] ID:uuid8 {datos}`

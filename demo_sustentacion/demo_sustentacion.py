@@ -24,6 +24,7 @@ from shared.models import SensorEvent, MonitoringRequest
 from shared.constants import (
     SENSOR_CAMARA, SENSOR_GPS, SENSOR_ESPIRA,
     COLUMN_LABELS, VERDE, ROJO,
+    intersection_id, display_intersection,
 )
 
 # ─── Configuración ───
@@ -43,12 +44,6 @@ auth_prefix = config.get("auth_tokens", {}).get("sensors_prefix", "")
 monitor_token = config.get("auth_tokens", {}).get("monitoring", "")
 
 # ─── Utilidades ───
-
-def col_label(col: int) -> str:
-    return COLUMN_LABELS.get(col, f"C{col}")
-
-def intersection_label(col: int, row: int) -> str:
-    return f"{col_label(col)}{row}"
 
 def now_str() -> str:
     return datetime.now().strftime("%H:%M:%S")
@@ -149,8 +144,9 @@ def kill_main_db():
 # ─── Eventos de la demo ───
 
 def demo_congestion_b2():
-    """t=60s: Congestión en C2K2"""
-    log("CONGESTION", "Enviando congestión a C2K2")
+    """t=60s: Congestión en B2"""
+    label = display_intersection(2, 2)
+    log("CONGESTION", f"Enviando congestión a {label}")
     log("CONGESTION", f"  → Sensor camara: longitud_cola=15 (umbral=5)")
     send_sensor_event(2, 2, SENSOR_CAMARA, {"longitud_cola": 15})
     time.sleep(0.1)
@@ -161,11 +157,12 @@ def demo_congestion_b2():
     time.sleep(0.1)
     log("CONGESTION", f"  → Sensor espira: vehiculos_por_minuto=28")
     send_sensor_event(2, 2, SENSOR_ESPIRA, {"vehiculos_por_minuto": 28})
-    log("CONGESTION", "  → Analytics debería detectar CONGESTIÓN en C2K2")
+    log("CONGESTION", f"  → Analytics debería detectar CONGESTIÓN en {label}")
 
 def demo_congestion_d3():
-    """t=95s: Congestión en C4K3"""
-    log("CONGESTION", "Enviando congestión a C4K3")
+    """t=95s: Congestión en D3"""
+    label = display_intersection(4, 3)
+    log("CONGESTION", f"Enviando congestión a {label}")
     log("CONGESTION", f"  → Sensor camara: longitud_cola=18 (umbral=5)")
     send_sensor_event(4, 3, SENSOR_CAMARA, {"longitud_cola": 18})
     time.sleep(0.1)
@@ -176,20 +173,20 @@ def demo_congestion_d3():
     time.sleep(0.1)
     log("CONGESTION", f"  → Sensor espira: vehiculos_por_minuto=29")
     send_sensor_event(4, 3, SENSOR_ESPIRA, {"vehiculos_por_minuto": 29})
-    log("CONGESTION", "  → Analytics debería detectar CONGESTIÓN en C4K3")
+    log("CONGESTION", f"  → Analytics debería detectar CONGESTIÓN en {label}")
 
 def demo_ambulancefila1():
     """t=130s: Ambulancia en fila 1"""
     log("AMBULANCIA", "Ambulancia solicitando paso en fila 1")
     for c in range(1, grid["columns"] + 1):
-        label = intersection_label(c, 1)
-        sem_id = f"SEM_C{c}K1_N"
-        log("AMBULANCIA", f"  → Override VERDE en {sem_id} ({label})")
+        label = display_intersection(c, 1)
+        sem_display = f"SEM_{label}_N"
+        log("AMBULANCIA", f"  → Override VERDE en {sem_display}")
         ok = send_ambulance_override(c, 1)
         if ok:
-            log("AMBULANCIA", f"    ✓ {sem_id} → VERDE")
+            log("AMBULANCIA", f"    ✓ {sem_display} → VERDE")
         else:
-            log("AMBULANCIA", f"    ✗ {sem_id} falló")
+            log("AMBULANCIA", f"    ✗ {sem_display} falló")
         time.sleep(0.2)
 
 def demo_kill_db():
@@ -207,34 +204,36 @@ def demo_ambulancefila1_2():
     """t=150s: Segunda ambulancia en fila 1"""
     log("AMBULANCIA", "Segunda ambulancia solicitando paso en fila 1")
     for c in range(1, grid["columns"] + 1):
-        label = intersection_label(c, 1)
-        sem_id = f"SEM_C{c}K1_N"
-        log("AMBULANCIA", f"  → Override VERDE en {sem_id} ({label})")
+        label = display_intersection(c, 1)
+        sem_display = f"SEM_{label}_N"
+        log("AMBULANCIA", f"  → Override VERDE en {sem_display}")
         ok = send_ambulance_override(c, 1)
         if ok:
-            log("AMBULANCIA", f"    ✓ {sem_id} → VERDE")
+            log("AMBULANCIA", f"    ✓ {sem_display} → VERDE")
         else:
-            log("AMBULANCIA", f"    ✗ {sem_id} falló")
+            log("AMBULANCIA", f"    ✗ {sem_display} falló")
         time.sleep(0.2)
 
 def demo_summary():
     """t=160s: Resumen de la demo"""
+    b2 = display_intersection(2, 2)
+    d3 = display_intersection(4, 3)
     print()
     log("RESUMEN", "=" * 60)
     log("RESUMEN", "Demo de sustentación completada")
     log("RESUMEN", "=" * 60)
     log("RESUMEN", "Eventos ejecutados:")
-    log("RESUMEN", f"  t=60s   → Congestión en C2K2")
-    log("RESUMEN", f"  t=95s   → Congestión en C4K3")
+    log("RESUMEN", f"  t=60s   → Congestión en {b2}")
+    log("RESUMEN", f"  t=95s   → Congestión en {d3}")
     log("RESUMEN", f"  t=130s  → Ambulancia fila 1")
     log("RESUMEN", f"  t=140s  → Caída BD principal (failover a réplica)")
     log("RESUMEN", f"  t=150s  → Segunda ambulancia fila 1")
     log("RESUMEN", "=" * 60)
     log("RESUMEN", "Puedes hacer consultas desde PC3:")
-    log("RESUMEN", "  1 INT_C2K2  → Ver estado de C2K2")
-    log("RESUMEN", "  1 INT_C4K3  → Ver estado de C4K3")
+    log("RESUMEN", f"  1 {b2}     → Ver estado de {b2}")
+    log("RESUMEN", f"  1 {d3}     → Ver estado de {d3}")
     log("RESUMEN", "  3           → Listar semáforos (fila 1 debería estar en VERDE)")
-    log("RESUMEN", "  5 INT_C2K2  → Consulta histórica de C2K2")
+    log("RESUMEN", f"  5 {b2}     → Consulta histórica de {b2}")
     log("RESUMEN", "=" * 60)
 
 # ─── Cronograma ───
@@ -251,8 +250,8 @@ def run_demo():
     print("=" * 60)
     print()
     log("CRONOGRAMA", "Eventos programados:")
-    log("CRONOGRAMA", f"  t=60s   → Congestión en C2K2")
-    log("CRONOGRAMA", f"  t=95s   → Congestión en C4K3")
+    log("CRONOGRAMA", f"  t=60s   → Congestión en {display_intersection(2, 2)}")
+    log("CRONOGRAMA", f"  t=95s   → Congestión en {display_intersection(4, 3)}")
     log("CRONOGRAMA", f"  t=130s  → Ambulancia fila 1")
     log("CRONOGRAMA", f"  t=140s  → Caída BD principal")
     log("CRONOGRAMA", f"  t=150s  → Segunda ambulancia fila 1")
@@ -289,7 +288,7 @@ def run_demo():
                 break
             # Mostrar progreso cada 30 segundos
             next_event = None
-            for delay, name in [(60, "Congestión C2K2"), (95, "Congestión C4K3"),
+            for delay, name in [(60, f"Congestión {display_intersection(2, 2)}"), (95, f"Congestión {display_intersection(4, 3)}"),
                                 (130, "Ambulancia 1"), (140, "Caída BD"),
                                 (150, "Ambulancia 2"), (160, "Resumen")]:
                 if elapsed < delay:
