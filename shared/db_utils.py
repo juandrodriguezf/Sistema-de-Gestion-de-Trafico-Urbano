@@ -159,7 +159,7 @@ class DatabaseManager:
                      tipo_sensor: str, datos: dict, timestamp: str):
         """Inserta un evento del sensor."""
         self.conn.execute(
-            "INSERT INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
             (evento_id, sensor_id, interseccion_id, tipo_sensor, json.dumps(datos), timestamp)
         )
         self.conn.commit()
@@ -194,7 +194,7 @@ class DatabaseManager:
                             razon: str, origen: str, timestamp: str):
         """Registra una acción del semaforo."""
         self.conn.execute(
-            "INSERT INTO acciones_semaforo (accion_id, semaforo_id, estado_anterior, estado_nuevo, razon, origen, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO acciones_semaforo (accion_id, semaforo_id, estado_anterior, estado_nuevo, razon, origen, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (accion_id, semaforo_id, estado_anterior, estado_nuevo, razon, origen, timestamp)
         )
         self.conn.commit()

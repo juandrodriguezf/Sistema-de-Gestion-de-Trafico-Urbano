@@ -65,6 +65,33 @@ req_socket = context.socket(zmq.REQ)
 req_socket.connect(f"tcp://{pc2_host}:{ports['monitoring_to_analytics']}")
 time.sleep(0.3)
 
+# ─── Iniciar Replica DB (necesaria para consultas históricas) ───
+
+replica_proc = None
+
+def start_replica_db():
+    """Inicia replica_db.py en background para que las consultas históricas funcionen."""
+    global replica_proc
+    try:
+        python = sys.executable
+        replica_path = os.path.join(os.path.dirname(__file__), "..", "pc2", "replica_db.py")
+        if sys.platform == "win32":
+            replica_proc = subprocess.Popen(
+                [python, replica_path],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        else:
+            replica_proc = subprocess.Popen(
+                [python, replica_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        log("INIT", "Replica DB iniciada en background")
+        time.sleep(1)
+    except Exception as e:
+        log("ERROR", f"No se pudo iniciar Replica DB: {e}")
+        log("ERROR", "  → Las consultas históricas (cmd 5) no funcionarán")
+
 # ─── Enviar evento de sensor falso ───
 
 def send_sensor_event(col: int, row: int, sensor_type: str, datos: dict):
@@ -111,28 +138,22 @@ def kill_main_db():
     """Mata el proceso main_db.py para simular caída de BD principal."""
     try:
         if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq python.exe", "/FO", "CSV"],
-                capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
+            ps_cmd = (
+                'Get-CimInstance Win32_Process '
+                '-Filter "Name=\'python.exe\' AND CommandLine LIKE \'%main_db%\'" '
+                '| Select-Object -ExpandProperty ProcessId'
             )
-            # Buscar main_db en los procesos
-            for line in result.stdout.splitlines():
-                if "main_db" in line.lower():
-                    pid = line.split(",")[1].strip('"')
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            for line in result.stdout.strip().splitlines():
+                pid = line.strip()
+                if pid.isdigit():
                     subprocess.run(["taskkill", "/PID", pid, "/F"],
-                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                    return True
-            # Si no encontró por nombre, intentar con wmic
-            result = subprocess.run(
-                ["wmic", "process", "where",
-                 "commandline like '%main_db%' and name='python.exe'", "get", "processid"],
-                capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line and line.isdigit():
-                    subprocess.run(["taskkill", "/PID", line, "/F"],
-                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                                   capture_output=True,
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
                     return True
         else:
             subprocess.run(["pkill", "-f", "main_db.py"], capture_output=True)
@@ -242,6 +263,9 @@ def run_demo():
     """Ejecuta la demo completa con cronograma en tiempo real."""
     start_time = time.time()
 
+    # Iniciar Replica DB para que las consultas históricas funcionen
+    start_replica_db()
+
     print()
     print("=" * 60)
     print("  DEMO DE SUSTENTACIÓN — SISTEMA DE TRÁFICO URBANO")
@@ -305,6 +329,12 @@ def run_demo():
         for t in timers:
             t.cancel()
     finally:
+        if replica_proc:
+            try:
+                replica_proc.terminate()
+                replica_proc.wait(timeout=3)
+            except Exception:
+                replica_proc.kill()
         pub_socket.close()
         req_socket.close()
         context.term()

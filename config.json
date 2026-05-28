@@ -11,7 +11,7 @@
         "D_MAX": 20
     },
     "heartbeat_interval_seconds": 5,
-    "heartbeat_timeout_seconds": 15,
+    "heartbeat_timeout_seconds": 8,
     "zmq_ports": {
         "broker_frontend": 5555,
         "broker_backend": 5556,

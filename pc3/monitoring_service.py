@@ -108,6 +108,7 @@ class MonitoringService:
 
     _RE_INT = re.compile(r"^INT_C(\d+)K(\d+)$")
     _RE_SEM = re.compile(r"^SEM_C(\d+)K(\d+)_(N|S|E|W)$")
+    _RE_ISO = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:\+00:00|Z)$")
 
     def _to_display(self, obj):
         if isinstance(obj, str):
@@ -117,6 +118,12 @@ class MonitoringService:
             m = self._RE_SEM.match(obj)
             if m:
                 return display_semaforo(int(m.group(1)), int(m.group(2)), m.group(3))
+            m = self._RE_ISO.match(obj)
+            if m:
+                from datetime import datetime, timezone, timedelta
+                utc_dt = datetime.fromisoformat(m.group(1)).replace(tzinfo=timezone.utc)
+                local_dt = utc_dt.astimezone(timezone(timedelta(hours=-5)))
+                return local_dt.strftime("%Y-%m-%dT%H:%M:%S")
             return obj
         if isinstance(obj, dict):
             return {self._to_display(k): self._to_display(v) for k, v in obj.items()}
@@ -200,19 +207,33 @@ class MonitoringService:
                     self.print_response(resp)
 
                 elif cmd == "5":
+                    from datetime import datetime, timezone, timedelta
+
                     label = input("  Intersección (ej: A1): ").strip()
-                    # Convertir de display (A1) a interno (INT_C1K1)
                     col, row = parse_display_intersection(label)
                     int_id = intersection_id(col, row)
                     print("  Deja en blanco para usar valores por defecto (última hora)")
                     inicio = input("  Fecha inicio (ISO 8601, ej: 2026-05-24T00:00:00): ").strip()
                     fin = input("  Fecha fin (ISO 8601, ej: 2026-05-24T23:59:59): ").strip()
+
+                    def to_utc(s: str) -> str:
+                        if not s:
+                            return s
+                        if "+" in s or s.endswith("Z"):
+                            return s
+                        local = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
+                        local = local.replace(tzinfo=timezone(timedelta(hours=-5)))
+                        return local.astimezone(timezone.utc).isoformat(timespec="seconds")
+
                     if not inicio:
-                        from datetime import datetime, timezone, timedelta
                         inicio = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+                    else:
+                        inicio = to_utc(inicio)
                     if not fin:
-                        from datetime import datetime, timezone
                         fin = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    else:
+                        fin = to_utc(fin)
+
                     resp = self.query_historical(int_id, inicio, fin)
                     self.print_response(resp)
 
