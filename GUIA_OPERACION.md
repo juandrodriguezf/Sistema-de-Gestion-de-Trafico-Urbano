@@ -6,7 +6,7 @@ Este documento detalla la configuración y ejecución del sistema distribuido de
 
 - **Python 3.9+** instalado en las 3 máquinas o entornos virtuales.
 - **Librería ZeroMQ**: Instalable mediante `pip install pyzmq`. 
-- **Acceso de Red:** Asegurar que los puertos definidos en `config.json` estén abiertos (Default: 5555-5561).
+- **Acceso de Red:** Asegurar que los puertos definidos en `config.json` estén abiertos (Default: 5555-5562).
 
 ---
 
@@ -24,6 +24,7 @@ Para que el sistema funcione de forma distribuida, cada PC debe contener la carp
     ```bash
     python pc1/start_pc1.py                # Broker original (zmq.proxy())
     python pc1/start_pc1.py --threaded     # Broker multihilos
+    python pc1/start_pc1.py --frequency 3  # Sensores cada 3s (override de config.json)
     ```
 
 ### **PC2: Analítica y Control (PC de Respaldo)**
@@ -128,6 +129,8 @@ Tabla que refleja **literalmente** la tabla `eventos` de SQLite, actualizada cad
 
 **Nota:** Ambos visores convierten automáticamente los timestamps UTC almacenados en la BD a la hora local del sistema.
 
+**Fallback a réplica:** los visores comparan cada 5s el evento más reciente de `main_traffic.db` y `replica_traffic.db`. Si la réplica está más actualizada (por ejemplo, durante un failover), cambian a ella automáticamente y muestran `BD: replica` en el encabezado. Al recuperarse MainDB, vuelven a `BD: main`. La ruta de la réplica se puede ajustar con `--replica-db-path`.
+
 ---
 
 ## 🛡️ Escenario de Fallo (Failover)
@@ -136,7 +139,21 @@ Para demostrar la tolerancia a fallos exigida en la rúbrica:
 
 1.  Mantén el sistema funcionando y observa la terminal de **PC2 (Analytics)**; verás el mensaje `"Recibiendo Heartbeat de PC3..."`.
 2.  Detén manualmente el proceso de **PC3** (Ctrl+C).
-3.  Tras 15 segundos (configurable), **PC2** detectará la falta de heartbeat y activará la `Replica DB` local.
+3.  Tras `heartbeat_timeout_seconds` (8s por defecto), **PC2** detectará la falta de heartbeat y activará la `Replica DB` local.
+4.  Durante el failover, Analytics escribe en la réplica y registra cada operación en `failover_outbox`.
+5.  Al reiniciar MainDB, el heartbeat se restaura y Analytics reconcilia el outbox contra `resync_port` (5562) por lotes de `resync_batch_size`. Solo entonces vuelve a la BD principal; si el resync falla, sigue en la réplica y reintenta.
+6.  El resync es idempotente, por lo que un replay no duplica eventos, estados, acciones ni cambios de semáforo.
+7.  Un override de ambulancia (`priority_hold_seconds`, 30s) cancela los timers normales y mantiene la prioridad hasta que expira, momento en que el semáforo vuelve a ROJO.
+
+**Parámetros relacionados en `config.json`:**
+
+| Parámetro | Descripción | Default |
+|-----------|-------------|---------|
+| `heartbeat_timeout_seconds` | Tiempo sin heartbeat antes del failover | 8 |
+| `priority_hold_seconds` | Duración del override de prioridad | 30 |
+| `resync_batch_size` | Mensajes por lote de reconciliación | 100 |
+| `resync_timeout_seconds` | Timeout del REQ de resync | 5 |
+| `monitoring_timeout_seconds` | Timeout del CLI de monitoreo | 5 |
 
 ---
 
@@ -147,8 +164,8 @@ entrega1_proyecto/
 ├── pc1/ (start_pc1.py, broker.py, broker_threaded.py, sensor_*.py)
 ├── pc2/ (start_pc2.py, analytics_service.py, traffic_light_controller.py, replica_db.py)
 ├── pc3/ (start_pc3.py, main_db.py, monitoring_service.py, live_viewer.py, traceability_viewer.py)
-├── shared/ (db_utils.py, validation.py, models.py, constants.py)
-├── tests/ (test_functional.py, run_experiments.py, ...)
+├── shared/ (db_utils.py, validation.py, models.py, constants.py, viewer_db.py)
+├── tests/ (test_functional.py, test_failover.py, integration_failover_recovery.py, run_experiments.py, ...)
 ├── data/ (Bases de datos SQLite + gráficas de experimentos)
 ├── docs/ (Diagramas UML + informes)
 └── config.json (Configuración de IPs y Puertos)

@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 def _now() -> str:
@@ -52,9 +52,11 @@ class SensorEvent:
 class TrafficState:
     """Resultado de la evaluación para una intersección."""
     interseccion: str
-    estado: str               # normal | congestion
+    estado: str               # normal | congestion | prioridad
     metricas: Dict[str, float]
+    # Accion principal (compatibilidad); usar acciones_tomadas para el conjunto completo
     accion_tomada: Optional[Dict[str, str]] = None
+    acciones_tomadas: List[Dict[str, str]] = field(default_factory=list)
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
     # Trazabilidad: datos originales del SensorEvent que originó este estado
@@ -158,6 +160,7 @@ class ReplicationMessage:
     operacion: str            # INSERT | UPDATE
     datos: Dict[str, Any] = field(default_factory=dict)
     sequence_number: int = 0
+    session_id: str = ""
     tipo: str = "SYNC"
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
@@ -167,6 +170,49 @@ class ReplicationMessage:
 
     @classmethod
     def from_json(cls, raw: str) -> "ReplicationMessage":
+        d = json.loads(raw)
+        return cls(**d)
+
+
+# ═══════════════════════════════════════════
+# Reconciliación tras failover (Replica → Main DB)
+# ═══════════════════════════════════════════
+
+@dataclass
+class ResyncBatch:
+    """Lote de mensajes pendientes que la réplica envía a MainDB al recuperarse."""
+    mensajes: List[Dict[str, Any]] = field(default_factory=list)
+    session_id: str = ""
+    batch_id: str = field(default_factory=_uuid)
+    message_id: str = field(default_factory=_uuid)
+    timestamp: str = field(default_factory=_now)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ResyncBatch":
+        d = json.loads(raw)
+        return cls(**d)
+
+
+@dataclass
+class ResyncResponse:
+    """Resultado de aplicar un lote de reconciliación."""
+    tipo: str = "RESYNC_RESPONSE"
+    recibidos: int = 0
+    aplicados: int = 0
+    duplicados: int = 0
+    errores: int = 0
+    mensaje: str = ""
+    message_id: str = field(default_factory=_uuid)
+    timestamp: str = field(default_factory=_now)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ResyncResponse":
         d = json.loads(raw)
         return cls(**d)
 

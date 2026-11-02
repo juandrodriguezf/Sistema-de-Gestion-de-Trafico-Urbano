@@ -19,8 +19,13 @@
         "analytics_to_lights": 5558,
         "monitoring_to_analytics": 5559,
         "db_replication": 5560,
-        "heartbeat": 5561
+        "heartbeat": 5561,
+        "resync_port": 5562
     },
+    "resync_batch_size": 100,
+    "resync_timeout_seconds": 5,
+    "monitoring_timeout_seconds": 5,
+    "priority_hold_seconds": 30,
     "pc1_host": "192.168.10.6",
     "pc2_host": "192.168.10.6",
     "pc3_host": "192.168.10.18",

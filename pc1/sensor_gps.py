@@ -11,7 +11,7 @@ import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pc1.sensor import Sensor
+from pc1.sensor import Sensor, resolve_frequency
 from shared.constants import SENSOR_GPS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -88,7 +88,7 @@ if __name__ == "__main__":
         with open(config_path) as f:
             config = json.load(f)
 
-    freq = config.get("sensor_frequency_seconds", 1)
+    freq = resolve_frequency(sys.argv, config)
     token = config.get("auth_tokens", {}).get("sensors_prefix", "") + f"GPS_C{col}K{row}"
 
     sensor = SensorGPS(col, row, host, port, frequency=freq, auth_token=token, config=config)

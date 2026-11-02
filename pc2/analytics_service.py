@@ -13,13 +13,14 @@ import time
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.models import (
     SensorEvent, TrafficState, LightAction,
-    MonitoringRequest, MonitoringResponse, Heartbeat, _now
+    MonitoringRequest, MonitoringResponse, Heartbeat,
+    ResyncBatch, ResyncResponse, _now,
 )
 from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION, PRIORIDAD,
@@ -62,7 +63,11 @@ class AnalyticsService:
         # Seguimiento de estado previo y timers de retorno (15s)
         self._prev_traffic_state: dict = {}
         self._return_timers: dict = {}
-        self._return_lock = threading.Lock()
+        self._return_lock = threading.RLock()
+        # Overrides de prioridad: sem_id -> expiración y timer de auto-reversión
+        self.priority_hold_seconds = config.get("priority_hold_seconds", 30)
+        self._priority_holds: dict = {}
+        self._priority_timers: dict = {}
 
         # ─── Auth ───
         self.sensor_token_prefix = config.get("auth_tokens", {}).get("sensors_prefix", "")
@@ -76,6 +81,10 @@ class AnalyticsService:
         self.use_replica = False
         self.last_heartbeat_time = time.time()
         self.heartbeat_timeout = config.get("heartbeat_timeout_seconds", 15)
+        self.resync_batch_size = config.get("resync_batch_size", 100)
+        self.resync_timeout = config.get("resync_timeout_seconds", 5)
+        self._resync_req = None
+        self._failover_lock = threading.RLock()
 
         # ─── ZMQ Contexto ───
         self.context = zmq.Context()
@@ -129,10 +138,25 @@ class AnalyticsService:
             return CONGESTION
         return NORMAL
 
+    def _is_priority_held(self, sem_id: str) -> bool:
+        """Indica si un semaforo esta bajo un override de prioridad vigente."""
+        with self._return_lock:
+            deadline = self._priority_holds.get(sem_id)
+            if deadline is None:
+                return False
+            if time.time() >= deadline:
+                self._priority_holds.pop(sem_id, None)
+                return False
+            return True
+
     def _schedule_normal_return(self, col: int, row: int, light_pub: zmq.Socket):
         """Programa el cambio de VERDE a ROJO después de 15s en condiciones normales."""
         int_id = f"INT_C{col}K{row}"
+        sem_id = f"SEM_C{col}K{row}_N"
         with self._return_lock:
+            if self._is_priority_held(sem_id):
+                logger.info(f"TIMER: {sem_id} bajo prioridad, no se programa retorno normal")
+                return
             timer = self._return_timers.pop(int_id, None)
             if timer:
                 timer.cancel()
@@ -144,11 +168,15 @@ class AnalyticsService:
         logger.info(f"TIMER: {int_id} volvera a ROJO en 15s")
 
     def _revert_light(self, col: int, row: int, light_pub: zmq.Socket):
-        """Revierte el semáforo N de una intersección a ROJO."""
+        """Revierte el semáforo N de una intersección a ROJO y registra la acción."""
         int_id = f"INT_C{col}K{row}"
         sem_id = f"SEM_C{col}K{row}_N"
         with self._return_lock:
             self._return_timers.pop(int_id, None)
+            if self._is_priority_held(sem_id):
+                logger.info(f"TIMER: {sem_id} bajo prioridad, se cancela retorno normal")
+                return
+
         light_cmd = LightAction(
             semaforo_id=sem_id,
             nuevo_estado=ROJO,
@@ -158,6 +186,65 @@ class AnalyticsService:
         topic = semaforo_topic(col, row)
         light_pub.send_string(f"{topic} {light_cmd.to_json()}")
         logger.info(f"TIMER: {sem_id} -> ROJO (normal reanudado)")
+
+        accion = self._build_action(sem_id, ROJO, REASON_NORMAL, ORIGIN_ANALYTICS)
+        if accion is None:
+            logger.info(f"TIMER: {sem_id} ya estaba en ROJO, sin accion que registrar")
+            return
+
+        metrics = dict(
+            self.intersection_metrics.get(
+                int_id, {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0}
+            )
+        )
+        self._persist_traffic_state(TrafficState(
+            interseccion=int_id,
+            estado=NORMAL,
+            metricas=metrics,
+            accion_tomada=accion,
+            acciones_tomadas=[accion],
+        ))
+
+    def _revert_priority(self, col: int, row: int, sem_id: str):
+        """Finaliza el hold de prioridad y devuelve el semaforo a ROJO."""
+        int_id = f"INT_C{col}K{row}"
+        with self._return_lock:
+            self._priority_holds.pop(sem_id, None)
+            self._priority_timers.pop(sem_id, None)
+
+        if self._light_pub is None:
+            logger.warning(f"PRIORIDAD: {sem_id} expiro sin socket de luces disponible")
+            return
+
+        light_cmd = LightAction(
+            semaforo_id=sem_id,
+            nuevo_estado=ROJO,
+            razon=REASON_NORMAL,
+            origen=ORIGIN_ANALYTICS,
+        )
+        topic = semaforo_topic(col, row)
+        self._light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+
+        accion = self._build_action(sem_id, ROJO, REASON_NORMAL, ORIGIN_ANALYTICS)
+        if accion is None:
+            logger.info(f"PRIORIDAD: {sem_id} ya estaba en ROJO, sin accion que registrar")
+            return
+
+        metrics = dict(
+            self.intersection_metrics.get(
+                int_id, {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0}
+            )
+        )
+        self._persist_traffic_state(TrafficState(
+            interseccion=int_id,
+            estado=NORMAL,
+            metricas=metrics,
+            accion_tomada=accion,
+            acciones_tomadas=[accion],
+        ))
+        logger.info(
+            f"PRIORIDAD: {sem_id} revertida a ROJO tras {self.priority_hold_seconds}s"
+        )
 
     def update_metrics(self, event: SensorEvent):
         """Actualiza las métricas de la intersección a partir de un evento de sensor."""
@@ -185,11 +272,237 @@ class AnalyticsService:
         prefix = self.sensor_token_prefix
         return {sid: prefix + sid for sid in self.registered_sensors}
 
+    def _build_action(self, sem_id: str, nuevo_estado: str,
+                      razon: str, origen: str) -> Optional[dict]:
+        """Construye una accion solo si implica un cambio real de estado."""
+        prev = self.replica_db.get_semaforo_state(sem_id)
+        if prev not in (VERDE, ROJO):
+            prev = ROJO if nuevo_estado == VERDE else VERDE
+        if prev == nuevo_estado:
+            return None
+        return {
+            "tipo": "CAMBIO_LUZ",
+            "semaforo_id": sem_id,
+            "estado_anterior": prev,
+            "estado_nuevo": nuevo_estado,
+            "razon": razon,
+            "origen": origen,
+        }
+
+    @staticmethod
+    def _iter_actions(traffic_state: TrafficState):
+        """Itera las acciones de un estado, con fallback al campo legacy."""
+        if traffic_state.acciones_tomadas:
+            yield from traffic_state.acciones_tomadas
+        elif traffic_state.accion_tomada:
+            yield traffic_state.accion_tomada
+
+    def _persist_traffic_state(self, traffic_state: TrafficState,
+                               push_socket: zmq.Socket = None) -> bool:
+        """Persiste un estado por el unico escritor (MainDB) o en la replica en failover."""
+        with self._failover_lock:
+            if self.use_replica:
+                return self._persist_to_replica(traffic_state)
+
+        socket = push_socket or self._push_socket
+        if socket is None:
+            logger.warning("Sin socket PUSH; estado no persistido")
+            return False
+        try:
+            socket.send_string(traffic_state.to_json(), flags=zmq.NOBLOCK)
+            return True
+        except zmq.error.Again:
+            logger.debug("Socket PUSH lleno o no disponible. Mensaje descartado.")
+            return True
+        except Exception as e:
+            logger.error(f"Error al enviar estado a la BD principal: {e}")
+            return False
+
+    def _enqueue_outbox(self, message_id: str, tabla: str,
+                        operacion: str, datos: dict):
+        """Encola una escritura de failover para reconciliarla al volver a main."""
+        self.replica_db.enqueue_outbox(
+            message_id, tabla, operacion, datos, created_at=_now()
+        )
+
+    def _persist_to_replica(self, traffic_state: TrafficState) -> bool:
+        """Escribe el estado y sus acciones en la replica y los encola en el outbox."""
+        try:
+            ts = traffic_state.timestamp
+            metrics = traffic_state.metricas
+            int_id = traffic_state.interseccion
+            base_id = traffic_state.message_id
+
+            if traffic_state.original_event_id:
+                event_payload = {
+                    "evento_id": traffic_state.original_event_id,
+                    "sensor_id": traffic_state.original_sensor_id,
+                    "interseccion_id": int_id,
+                    "tipo_sensor": traffic_state.original_tipo_sensor,
+                    "datos": json.loads(traffic_state.original_datos) if traffic_state.original_datos else metrics,
+                    "timestamp": ts,
+                    "timestamp_sensor": traffic_state.original_timestamp or ts,
+                }
+                self.replica_db.insert_event(
+                    event_payload["evento_id"],
+                    event_payload["sensor_id"],
+                    event_payload["interseccion_id"],
+                    event_payload["tipo_sensor"],
+                    event_payload["datos"],
+                    event_payload["timestamp"],
+                    timestamp_sensor=event_payload["timestamp_sensor"],
+                )
+                self._enqueue_outbox(f"{base_id}:evento", "eventos", "INSERT", event_payload)
+
+            state_payload = {
+                "interseccion_id": int_id,
+                "Q": metrics.get("Q", 0),
+                "Vp": metrics.get("Vp", 0),
+                "D": metrics.get("D", 0),
+                "vehiculos_por_minuto": metrics.get("vehiculos_por_minuto", 0),
+                "estado": traffic_state.estado,
+                "timestamp": ts,
+                "message_id": base_id,
+            }
+            self.replica_db.insert_traffic_state(
+                state_payload["interseccion_id"],
+                state_payload["Q"],
+                state_payload["Vp"],
+                state_payload["D"],
+                state_payload["vehiculos_por_minuto"],
+                state_payload["estado"],
+                state_payload["timestamp"],
+                message_id=base_id,
+            )
+            self._enqueue_outbox(f"{base_id}:estado", "estado_trafico", "INSERT", state_payload)
+
+            for accion in self._iter_actions(traffic_state):
+                sem_id = accion.get("semaforo_id", "")
+                estado_ant = accion.get("estado_anterior", "")
+                estado_new = accion.get("estado_nuevo", "")
+                if not sem_id or estado_ant == estado_new:
+                    continue
+
+                accion_id = str(uuid.uuid4())
+                accion_payload = {
+                    "accion_id": accion_id,
+                    "semaforo_id": sem_id,
+                    "estado_anterior": estado_ant,
+                    "estado_nuevo": estado_new,
+                    "razon": accion.get("razon", ""),
+                    "origen": accion.get("origen", ""),
+                    "timestamp": ts,
+                }
+                self.replica_db.insert_light_action(
+                    accion_id, sem_id, estado_ant, estado_new,
+                    accion_payload["razon"], accion_payload["origen"], ts,
+                )
+                self._enqueue_outbox(
+                    f"{base_id}:accion:{accion_id}", "acciones_semaforo",
+                    "INSERT", accion_payload,
+                )
+
+                sem_payload = {
+                    "semaforo_id": sem_id,
+                    "estado_actual": estado_new,
+                    "timestamp": ts,
+                }
+                self.replica_db.update_semaforo(sem_id, estado_new, ts)
+                self._enqueue_outbox(
+                    f"{base_id}:semaforo:{sem_id}", "semaforos", "UPDATE", sem_payload,
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Error al escribir en la BD replica: {e}")
+            return False
+
+    def _flush_outbox(self) -> bool:
+        """Reconcilia el outbox contra MainDB antes de volver a la BD principal."""
+        with self._failover_lock:
+            if not self.use_replica:
+                return True
+
+            while True:
+                pending = self.replica_db.get_pending_outbox(self.resync_batch_size)
+                if not pending:
+                    return True
+                if not self._send_outbox_batch(pending):
+                    return False
+
+    def _reset_resync_socket(self):
+        """Recrea el socket REQ tras un timeout (REQ queda en estado EFSM)."""
+        old = self._resync_req
+        if old is not None and hasattr(old, "close"):
+            try:
+                old.close()
+            except Exception:
+                pass
+        try:
+            pc3_host = self.config.get("pc3_host", "localhost")
+            self._resync_req = self.context.socket(zmq.REQ)
+            self._resync_req.connect(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        except Exception as e:
+            self._resync_req = None
+            logger.error(f"No se pudo recrear el socket de resync: {e}")
+
+    def _send_outbox_batch(self, pending: list) -> bool:
+        """Envia un lote del outbox al endpoint de resync de MainDB."""
+        if self._resync_req is None:
+            logger.error("Sin socket de resync; no se puede reconciliar el outbox")
+            return False
+
+        mensajes = []
+        for row in pending:
+            try:
+                datos = json.loads(row["datos"])
+            except Exception as e:
+                self.replica_db.mark_outbox_error(row["message_id"], f"JSON invalido: {e}")
+                return False
+            mensajes.append({
+                "message_id": row["message_id"],
+                "tabla": row["tabla"],
+                "operacion": row["operacion"],
+                "datos": datos,
+            })
+
+        batch = ResyncBatch(mensajes=mensajes)
+        try:
+            self._resync_req.send_string(batch.to_json())
+            if not self._resync_req.poll(self.resync_timeout * 1000):
+                for row in pending:
+                    self.replica_db.mark_outbox_error(row["message_id"], "timeout de resync")
+                logger.warning("Resync sin respuesta de MainDB; se mantiene la replica")
+                self._reset_resync_socket()
+                return False
+
+            response = ResyncResponse.from_json(self._resync_req.recv_string())
+            if response.tipo == "ERROR" or response.errores:
+                for row in pending:
+                    self.replica_db.mark_outbox_error(row["message_id"], response.mensaje)
+                logger.warning(f"Resync rechazado por MainDB: {response.mensaje}")
+                return False
+
+            for row in pending:
+                self.replica_db.mark_outbox_sent(row["message_id"])
+            logger.info(
+                f"Outbox reconciliado: {response.aplicados} aplicados, "
+                f"{response.duplicados} duplicados"
+            )
+            return True
+        except Exception as e:
+            for row in pending:
+                self.replica_db.mark_outbox_error(row["message_id"], str(e))
+            logger.error(f"Error al enviar lote de resync: {e}")
+            self._reset_resync_socket()
+            return False
+
     def process_event(self, event: SensorEvent, push_socket: zmq.Socket, light_pub: zmq.Socket):
         """Procesa un evento de sensor: valida, actualiza, evalua y actúa."""
         # 1. Valida
         event_dict = json.loads(event.to_json())
-        valid, reason = validate_sensor_event(event_dict, self.registered_sensors, self._build_auth_tokens())
+        valid, reason = validate_sensor_event(
+            event_dict, self.registered_sensors, self._build_auth_tokens(), self.grid
+        )
         if not valid:
             logger.warning(f"Evento inválido de {event.sensor_id}: {reason}")
             return
@@ -204,8 +517,9 @@ class AnalyticsService:
         self._prev_traffic_state[int_id] = estado
         metrics = self.intersection_metrics[int_id].copy()
 
-        # 4. Determina la acción
+        # 4. Determina las acciones (todas las luces modificadas)
         accion = None
+        acciones_tomadas = []
         parts = int_id.replace("INT_C", "").split("K")
         col, row = int(parts[0]), int(parts[1])
 
@@ -228,6 +542,9 @@ class AnalyticsService:
                 changed = []
                 for r in affected_rows:
                     sem_id = f"SEM_C{col}K{r}_N"
+                    if self._is_priority_held(sem_id):
+                        logger.info(f"OLA VERDE: {sem_id} bajo prioridad, se omite")
+                        continue
                     light_cmd = LightAction(
                         semaforo_id=sem_id,
                         nuevo_estado=VERDE,
@@ -237,19 +554,15 @@ class AnalyticsService:
                     topic = semaforo_topic(col, r)
                     light_pub.send_string(f"{topic} {light_cmd.to_json()}")
                     changed.append(sem_id)
-                logger.info(f"OLA VERDE C{col}: {changed}")
 
-                # Acción para la intersección principal
-                sem_id = f"SEM_C{col}K{row}_N"
-                prev = self.replica_db.get_semaforo_state(sem_id)
-                accion = {
-                    "tipo": "CAMBIO_LUZ",
-                    "semaforo_id": sem_id,
-                    "estado_anterior": prev if prev in (VERDE, ROJO) else ROJO,
-                    "estado_nuevo": VERDE,
-                    "razon": REASON_CONGESTION,
-                    "origen": ORIGIN_ANALYTICS,
-                }
+                    accion_sem = self._build_action(
+                        sem_id, VERDE, REASON_CONGESTION, ORIGIN_ANALYTICS
+                    )
+                    if accion_sem:
+                        acciones_tomadas.append(accion_sem)
+                        if r == row:
+                            accion = accion_sem
+                logger.info(f"OLA VERDE C{col}: {changed}")
 
         elif estado == NORMAL and prev_state == CONGESTION:
             # Programa el retorno de esta intersección
@@ -266,6 +579,7 @@ class AnalyticsService:
             estado=estado,
             metricas=metrics,
             accion_tomada=accion,
+            acciones_tomadas=acciones_tomadas,
             original_event_id=event.message_id,
             original_sensor_id=event.sensor_id,
             original_tipo_sensor=event.tipo_sensor,
@@ -273,28 +587,8 @@ class AnalyticsService:
             original_timestamp=event.timestamp,
         )
 
-        # 6. Push a la BD
-        if not self.use_replica:
-            try:
-                db_msg = traffic_state.to_json()
-                push_socket.send_string(db_msg, flags=zmq.NOBLOCK)
-            except zmq.error.Again:
-                logger.debug("Socket PUSH lleno o no disponible. Mensaje descartado.")
-
-        # 7. También almacena el evento en la BD réplica si está en modo de failover
-        if self.use_replica:
-            try:
-                ts = _now()
-                self.replica_db.insert_event(
-                    event.message_id, event.sensor_id, event.interseccion,
-                    event.tipo_sensor, event.datos, ts
-                )
-                self.replica_db.insert_traffic_state(
-                    int_id, metrics["Q"], metrics["Vp"], metrics["D"],
-                    metrics["vehiculos_por_minuto"], estado, ts
-                )
-            except Exception as e:
-                logger.error(f"Error al escribir en la BD réplica: {e}")
+        # 6. Persiste el estado (MainDB en operacion normal, replica en failover)
+        self._persist_traffic_state(traffic_state, push_socket)
 
     # ═══════════════════════════════════════════
     # Manejador REP de Monitoreo (se ejecuta en hilo)
@@ -354,7 +648,7 @@ class AnalyticsService:
                 )
 
             elif consulta == CMD_LISTAR_SEMAFOROS:
-                #se retorna los semaforos desde la bd replica, filtrados por grilla configurada
+                # Analytics siempre lee del archivo replica local; db_mode indica el modo de failover
                 sems = self.replica_db.get_all_semaforos(
                     columns=self.config["grid"]["columns"],
                     rows=self.config["grid"]["rows"]
@@ -362,8 +656,11 @@ class AnalyticsService:
                 mode_str = "replica" if self.use_replica else "main"
                 return MonitoringResponse(
                     tipo="RESPUESTA",
-                    datos={"semaforos": sems, "db_mode": mode_str},
-                    mensaje=f"Lista de {len(sems)} semáforos (Modo: {mode_str})"
+                    datos={"semaforos": sems, "db_mode": mode_str, "fuente": "replica"},
+                    mensaje=(
+                        f"Lista de {len(sems)} semáforos "
+                        f"(Modo: {mode_str}, Fuente: replica)"
+                    )
                 )
 
             elif consulta == "CONSULTA_HISTORICA":
@@ -385,7 +682,7 @@ class AnalyticsService:
                 )
 
         elif tipo == CMD_OVERRIDE:
-            valid, reason = validate_override_command(data, self.monitor_token)
+            valid, reason = validate_override_command(data, self.monitor_token, self.grid)
             if not valid:
                 return MonitoringResponse(tipo="ERROR", mensaje=reason)
             return self._execute_override(
@@ -414,9 +711,6 @@ class AnalyticsService:
                 mensaje="Servicio de analitica aun no inicializo los sockets ZMQ",
             )
 
-        prev = self.replica_db.get_semaforo_state(sem_id)
-        estado_anterior = prev if prev in (VERDE, ROJO) else ROJO
-
         motivo_l = str(motivo).lower()
         razon = REASON_PRIORITY if "ambulancia" in motivo_l else REASON_MANUAL
 
@@ -436,66 +730,54 @@ class AnalyticsService:
                 mensaje=f"No se pudo enviar el comando al controlador: {e}",
             )
 
+        with self._return_lock:
+            previous_hold = self._priority_timers.pop(sem_id, None)
+            if previous_hold:
+                previous_hold.cancel()
+            if razon == REASON_PRIORITY:
+                normal_timer = self._return_timers.pop(int_id, None)
+                if normal_timer:
+                    normal_timer.cancel()
+                self._priority_holds[sem_id] = time.time() + self.priority_hold_seconds
+                hold_timer = threading.Timer(
+                    self.priority_hold_seconds,
+                    self._revert_priority,
+                    args=[col, row, sem_id],
+                )
+                hold_timer.daemon = True
+                self._priority_timers[sem_id] = hold_timer
+                hold_timer.start()
+            else:
+                self._priority_holds.pop(sem_id, None)
+
+        accion = self._build_action(sem_id, nuevo_estado, razon, ORIGIN_MONITORING)
+        if accion is None:
+            logger.info(f"OVERRIDE: {sem_id} ya estaba en {nuevo_estado}, sin accion que registrar")
+            return MonitoringResponse(
+                tipo="RESPUESTA",
+                datos={"semaforo_id": sem_id, "nuevo_estado": nuevo_estado, "ejecutado": False},
+                mensaje=f"Sin cambio registrado: {sem_id} ya estaba en {nuevo_estado}",
+            )
+
         metrics = dict(
             self.intersection_metrics.get(
                 int_id,
                 {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0},
             )
         )
-        accion = {
-            "tipo": "CAMBIO_LUZ",
-            "semaforo_id": sem_id,
-            "estado_anterior": estado_anterior,
-            "estado_nuevo": nuevo_estado,
-            "razon": razon,
-            "origen": ORIGIN_MONITORING,
-        }
         traffic_state = TrafficState(
             interseccion=int_id,
             estado=PRIORIDAD,
             metricas=metrics,
             accion_tomada=accion,
+            acciones_tomadas=[accion],
         )
 
-        if not self.use_replica:
-            try:
-                self._push_socket.send_string(traffic_state.to_json(), flags=zmq.NOBLOCK)
-            except zmq.error.Again:
-                logger.warning("Override: socket PUSH lleno o no disponible; BD principal puede no reflejar el cambio.")
-            except Exception as e:
-                logger.error(f"Override: error al enviar a la BD principal: {e}")
-                return MonitoringResponse(
-                    tipo="ERROR",
-                    mensaje=f"Comando enviado al semaforo pero fallo la persistencia: {e}",
-                )
-        else:
-            try:
-                ts = _now()
-                self.replica_db.insert_traffic_state(
-                    int_id,
-                    metrics["Q"],
-                    metrics["Vp"],
-                    metrics["D"],
-                    metrics["vehiculos_por_minuto"],
-                    PRIORIDAD,
-                    ts,
-                )
-                self.replica_db.insert_light_action(
-                    str(uuid.uuid4()),
-                    sem_id,
-                    estado_anterior,
-                    nuevo_estado,
-                    razon,
-                    ORIGIN_MONITORING,
-                    ts,
-                )
-                self.replica_db.update_semaforo(sem_id, nuevo_estado, ts)
-            except Exception as e:
-                logger.error(f"Override: error al escribir en la BD replica: {e}")
-                return MonitoringResponse(
-                    tipo="ERROR",
-                    mensaje=f"Comando enviado al semaforo pero fallo la BD replica: {e}",
-                )
+        if not self._persist_traffic_state(traffic_state):
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje="Comando enviado al semaforo pero fallo la persistencia",
+            )
 
         logger.info(f"OVERRIDE: {sem_id} -> {nuevo_estado} (motivo: {motivo}, razon: {razon})")
         return MonitoringResponse(
@@ -510,25 +792,52 @@ class AnalyticsService:
 
     def monitor_heartbeat(self, hb_socket: zmq.Socket):
         """Monitorea el heartbeat de PC3. Cambia a réplica si hay timeout."""
-        logger.info(f"Monitor de heartbeat iniciado (timeout={self.heartbeat_timeout}s)")
-        while self.running:
-            try:
-                if hb_socket.poll(1000):
-                    msg = hb_socket.recv_string()
-                    self.last_heartbeat_time = time.time()
-                    if self.use_replica:
-                        logger.info("Heartbeat de PC3 restaurado! Volviendo a la BD principal")
-                        self.use_replica = False
+        pc3_host = self.config.get("pc3_host", "localhost")
+        resync_req = self.context.socket(zmq.REQ)
+        resync_req.connect(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        self._resync_req = resync_req
+        logger.info(
+            f"Monitor de heartbeat iniciado (timeout={self.heartbeat_timeout}s, "
+            f"resync=tcp://{pc3_host}:{self.ports['resync_port']})"
+        )
+        try:
+            while self.running:
+                try:
+                    if hb_socket.poll(1000):
+                        msg = hb_socket.recv_string()
+                        self.last_heartbeat_time = time.time()
+                        if self.use_replica:
+                            with self._failover_lock:
+                                if self._flush_outbox():
+                                    self.use_replica = False
+                                    logger.info(
+                                        "Heartbeat de PC3 restaurado y outbox reconciliado! "
+                                        "Volviendo a la BD principal"
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Heartbeat restaurado pero el outbox no se pudo "
+                                        "reconciliar; se mantiene la BD replica"
+                                    )
 
-                # Verificar timeout
-                elapsed = time.time() - self.last_heartbeat_time
-                if elapsed > self.heartbeat_timeout and not self.use_replica:
-                    logger.warning(f"PC3 heartbeat se quedo sin pulso ({elapsed:.0f}s). Cambiando a BD Réplica!")
-                    self.use_replica = True
+                    # Verificar timeout
+                    elapsed = time.time() - self.last_heartbeat_time
+                    with self._failover_lock:
+                        if elapsed > self.heartbeat_timeout and not self.use_replica:
+                            logger.warning(
+                                f"PC3 heartbeat se quedo sin pulso ({elapsed:.0f}s). "
+                                "Cambiando a BD Réplica!"
+                            )
+                            self.use_replica = True
 
-            except zmq.ZMQError:
-                if self.running:
-                    time.sleep(1)
+                except zmq.ZMQError:
+                    if self.running:
+                        time.sleep(1)
+        finally:
+            req = self._resync_req
+            self._resync_req = None
+            if req is not None and hasattr(req, "close"):
+                req.close()
 
     # ═══════════════════════════════════════════
     # Bucle principal

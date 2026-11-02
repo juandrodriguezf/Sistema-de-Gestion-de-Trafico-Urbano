@@ -149,7 +149,7 @@ def count_db_events() -> int:
 
 
 def measure_override_latency(monitoring_port: int) -> float:
-    """Mide tiempo de REQ/REP del override (Monitoreo → Analytics → PUB → respuesta)."""
+    """Mide tiempo de REQ/REP del override (Monitoreo -> Analytics -> PUB -> respuesta)."""
     try:
         ctx = zmq.Context()
         sock = ctx.socket(zmq.REQ)
@@ -274,7 +274,7 @@ def run_single(scenario: dict, broker: dict) -> dict:
         )
         if acciones:
             ultima = acciones[-1]
-            print(f"        Override verificado: {ultima.get('semaforo_id', 'N/A')} → {ultima.get('estado_nuevo', 'N/A')} ({ultima.get('razon', 'N/A')})")
+            print(f"        Override verificado: {ultima.get('semaforo_id', 'N/A')} -> {ultima.get('estado_nuevo', 'N/A')} ({ultima.get('razon', 'N/A')})")
         else:
             print("        [ADVERTENCIA] No se encontraron acciones de override en la BD")
         db_check.close()
@@ -306,7 +306,7 @@ def run_experiment(scenario: dict, broker: dict) -> dict:
     for run_idx in range(1, NUM_RUNS + 1):
         print(f"\n  --- Corrida {run_idx}/{NUM_RUNS} ---")
         result = run_single(scenario, broker)
-        print(f"    → {result['events_2min']} eventos, {result['avg_latency_ms']}ms")
+        print(f"    -> {result['events_2min']} eventos, {result['avg_latency_ms']}ms")
         raw_events.append(result["events_2min"])
         raw_latency.append(result["avg_latency_ms"])
 

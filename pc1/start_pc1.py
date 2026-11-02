@@ -25,7 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description="PC1 Launcher")
     parser.add_argument("--threaded", action="store_true",
                         help="Usar la variante multihilos del broker (broker_threaded.py)")
-    parser.add_argument("--frequency", type=int, default=None,
+    parser.add_argument("--frequency", type=float, default=None,
                         help="Sobrescribir sensor_frequency_seconds (para experimentos)")
     args = parser.parse_args()
 
@@ -34,7 +34,9 @@ def main():
     with open(config_path) as f:
         config = json.load(f)
 
-    if args.frequency:
+    if args.frequency is not None:
+        if args.frequency <= 0:
+            parser.error("--frequency debe ser mayor que cero")
         config["sensor_frequency_seconds"] = args.frequency
 
     grid = config["grid"]
@@ -69,8 +71,11 @@ def main():
     for c in range(1, cols + 1):
         for r in range(1, rows + 1):
             for tipo, script in sensor_scripts.items():
+                cmd = [python, script, str(c), str(r), broker_host, str(broker_port)]
+                if args.frequency is not None:
+                    cmd.append(str(args.frequency))
                 proc = subprocess.Popen(
-                    [python, script, str(c), str(r), broker_host, str(broker_port)],
+                    cmd,
                     cwd=os.path.join(pc1_dir, ".."),
                 )
                 name = f"{tipo.upper()}_{display_intersection(c, r)}"

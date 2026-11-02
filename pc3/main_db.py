@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from shared.models import TrafficState, ReplicationMessage, Heartbeat, _now
+from shared.models import (
+    TrafficState, ReplicationMessage, Heartbeat, ResyncBatch, ResyncResponse, _now
+)
 from shared.db_utils import DatabaseManager
 from shared.constants import TOPIC_SYNC, TOPIC_HEARTBEAT
 
@@ -39,8 +41,13 @@ class MainDBService:
         self.grid = config["grid"]
         self.ports = config["zmq_ports"]
         self.heartbeat_interval = config.get("heartbeat_interval_seconds", 5)
+        self.resync_batch_size = config.get("resync_batch_size", 100)
+        self.resync_timeout = config.get("resync_timeout_seconds", 5)
         self.running = False
         self.sequence_number = 0
+        self.session_id = ""
+        # Serializa el acceso a SQLite entre el hilo principal y el de resync
+        self._db_lock = threading.RLock()
 
         # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "main_traffic.db")
@@ -50,9 +57,14 @@ class MainDBService:
         self.context = zmq.Context()
 
     def _next_sequence(self) -> int:
-        """Obtiene el siguiente número de secuencia para el ordenamiento de la replicación."""
-        self.sequence_number += 1
-        return self.sequence_number
+        """Obtiene y persiste el siguiente numero de secuencia de replicacion."""
+        with self._db_lock:
+            self.sequence_number += 1
+            try:
+                self.db.set_replication_state(last_sequence=self.sequence_number)
+            except Exception as e:
+                logger.error(f"No se pudo persistir la secuencia de replicacion: {e}")
+            return self.sequence_number
 
     def send_heartbeat(self, hb_pub: zmq.Socket):
         """Envía un heartbeat periódico al servicio de Analytics."""
@@ -80,6 +92,7 @@ class MainDBService:
                 operacion=operacion,
                 datos=datos,
                 sequence_number=self._next_sequence(),
+                session_id=self.session_id,
             )
             msg = f"{TOPIC_SYNC} {rep_msg.to_json()}"
             rep_pub.send_string(msg)
@@ -88,32 +101,43 @@ class MainDBService:
 
     def process_traffic_state(self, state: TrafficState, rep_pub: zmq.Socket):
         """Procesa y almacena un estado de tráfico desde Analytics."""
+        with self._db_lock:
+            self._process_traffic_state_locked(state, rep_pub)
+
+    def _process_traffic_state_locked(self, state: TrafficState, rep_pub: zmq.Socket):
         try:
             int_id = state.interseccion
             metrics = state.metricas
+            ts = state.timestamp
 
-            # Trazabilidad: usa datos originales si están disponibles
+            # Solo los eventos reales de sensores van a la tabla `eventos`.
+            # Los estados generados por Analytics no se registran como eventos sinteticos.
             if state.original_event_id:
                 event_id = state.original_event_id
                 sensor_id = state.original_sensor_id
                 tipo_sensor = state.original_tipo_sensor
                 datos = json.loads(state.original_datos) if state.original_datos else metrics
-            else:
-                event_id = str(uuid.uuid4())
-                sensor_id = "analytics"
-                tipo_sensor = "analysis"
-                datos = metrics
+                timestamp_sensor = state.original_timestamp or ts
 
-            ts = state.timestamp
+                self.db.insert_event(
+                    evento_id=event_id,
+                    sensor_id=sensor_id,
+                    interseccion_id=int_id,
+                    tipo_sensor=tipo_sensor,
+                    datos=datos,
+                    timestamp=ts,
+                    timestamp_sensor=timestamp_sensor,
+                )
 
-            self.db.insert_event(
-                evento_id=event_id,
-                sensor_id=sensor_id,
-                interseccion_id=int_id,
-                tipo_sensor=tipo_sensor,
-                datos=datos,
-                timestamp=ts,
-            )
+                self.publish_replication(rep_pub, "eventos", "INSERT", {
+                    "evento_id": event_id,
+                    "sensor_id": sensor_id,
+                    "interseccion_id": int_id,
+                    "tipo_sensor": tipo_sensor,
+                    "datos": datos,
+                    "timestamp": ts,
+                    "timestamp_sensor": timestamp_sensor,
+                })
 
             # Almacena el estado del trafico
             self.db.insert_traffic_state(
@@ -124,17 +148,8 @@ class MainDBService:
                 veh_min=metrics.get("vehiculos_por_minuto", 0),
                 estado=state.estado,
                 timestamp=ts,
+                message_id=state.message_id,
             )
-
-            # Publica la replicacion del evento
-            self.publish_replication(rep_pub, "eventos", "INSERT", {
-                "evento_id": event_id,
-                "sensor_id": sensor_id,
-                "interseccion_id": int_id,
-                "tipo_sensor": tipo_sensor,
-                "datos": datos,
-                "timestamp": ts,
-            })
 
             # Publica la replicacion del estado del trafico
             self.publish_replication(rep_pub, "estado_trafico", "INSERT", {
@@ -145,17 +160,23 @@ class MainDBService:
                 "vehiculos_por_minuto": metrics.get("vehiculos_por_minuto", 0),
                 "estado": state.estado,
                 "timestamp": ts,
+                "message_id": state.message_id,
             })
 
-            # Si se tomo una accion, se almacena y se replica
-            if state.accion_tomada:
-                accion = state.accion_tomada
+            # Almacena y replica todas las acciones tomadas (principal y adyacentes)
+            acciones = state.acciones_tomadas or (
+                [state.accion_tomada] if state.accion_tomada else []
+            )
+            for accion in acciones:
                 accion_id = str(uuid.uuid4())
                 sem_id = accion.get("semaforo_id", "")
                 estado_ant = accion.get("estado_anterior", "")
                 estado_new = accion.get("estado_nuevo", "")
                 razon = accion.get("razon", "congestion_detectada")
                 origen = accion.get("origen", "analytics")
+
+                if not sem_id or estado_ant == estado_new:
+                    continue
 
                 self.db.insert_light_action(
                     accion_id=accion_id,
@@ -186,6 +207,133 @@ class MainDBService:
         except Exception as e:
             logger.error(f"error al procesar el registro: {e}")
 
+    # ═══════════════════════════════════════════
+    # Reconciliación tras failover (REP)
+    # ═══════════════════════════════════════════
+
+    def apply_resync_message(self, msg: dict) -> str:
+        """Aplica un mensaje del outbox de forma idempotente.
+
+        Returns: "aplicado" | "duplicado".
+        """
+        with self._db_lock:
+            return self._apply_resync_message_locked(msg)
+
+    def _apply_resync_message_locked(self, msg: dict) -> str:
+        tabla = msg.get("tabla", "")
+        operacion = msg.get("operacion", "")
+        datos = msg.get("datos") or {}
+
+        if tabla == "eventos" and operacion == "INSERT":
+            evento_id = datos.get("evento_id", "")
+            if not evento_id or self.db.event_exists(evento_id):
+                return "duplicado"
+            self.db.insert_event(
+                evento_id,
+                datos.get("sensor_id", ""),
+                datos.get("interseccion_id", ""),
+                datos.get("tipo_sensor", ""),
+                datos.get("datos", {}),
+                datos.get("timestamp", ""),
+                timestamp_sensor=datos.get("timestamp_sensor"),
+            )
+            return "aplicado"
+
+        if tabla == "estado_trafico" and operacion == "INSERT":
+            message_id = datos.get("message_id")
+            if self.db.traffic_state_exists(message_id):
+                return "duplicado"
+            self.db.insert_traffic_state(
+                datos.get("interseccion_id", ""),
+                datos.get("Q", 0),
+                datos.get("Vp", 0),
+                datos.get("D", 0),
+                datos.get("vehiculos_por_minuto", 0),
+                datos.get("estado", "normal"),
+                datos.get("timestamp", ""),
+                message_id=message_id,
+            )
+            return "aplicado"
+
+        if tabla == "acciones_semaforo" and operacion == "INSERT":
+            accion_id = datos.get("accion_id", "")
+            if not accion_id or self.db.light_action_exists(accion_id):
+                return "duplicado"
+            self.db.insert_light_action(
+                accion_id,
+                datos.get("semaforo_id", ""),
+                datos.get("estado_anterior", ""),
+                datos.get("estado_nuevo", ""),
+                datos.get("razon", ""),
+                datos.get("origen", ""),
+                datos.get("timestamp", ""),
+            )
+            return "aplicado"
+
+        if tabla == "semaforos" and operacion == "UPDATE":
+            sem_id = datos.get("semaforo_id", "")
+            nuevo_estado = datos.get("estado_actual", "")
+            if not sem_id:
+                return "duplicado"
+            if self.db.get_semaforo_state(sem_id) == nuevo_estado:
+                return "duplicado"
+            self.db.update_semaforo(sem_id, nuevo_estado, datos.get("timestamp", ""))
+            return "aplicado"
+
+        raise ValueError(f"mensaje de resync no soportado: {tabla}/{operacion}")
+
+    def process_resync_batch(self, batch: ResyncBatch) -> ResyncResponse:
+        """Aplica un lote completo y devuelve el resumen."""
+        with self._db_lock:
+            return self._process_resync_batch_locked(batch)
+
+    def _process_resync_batch_locked(self, batch: ResyncBatch) -> ResyncResponse:
+        aplicados = duplicados = errores = 0
+        for msg in batch.mensajes:
+            try:
+                resultado = self.apply_resync_message(msg)
+                if resultado == "aplicado":
+                    aplicados += 1
+                else:
+                    duplicados += 1
+            except Exception as e:
+                errores += 1
+                logger.error(f"Error al aplicar resync: {e}")
+
+        logger.info(
+            f"Resync {batch.batch_id[:8]}: recibidos={len(batch.mensajes)} "
+            f"aplicados={aplicados} duplicados={duplicados} errores={errores}"
+        )
+        return ResyncResponse(
+            recibidos=len(batch.mensajes),
+            aplicados=aplicados,
+            duplicados=duplicados,
+            errores=errores,
+            mensaje=f"Resync aplicado: {aplicados} nuevos, {duplicados} duplicados",
+        )
+
+    def handle_resync(self, rep_socket: zmq.Socket):
+        """Atiende lotes de reconciliacion desde la replica."""
+        logger.info("Endpoint de resync listo")
+        while self.running:
+            try:
+                if rep_socket.poll(1000):
+                    raw = rep_socket.recv_string()
+                    try:
+                        batch = ResyncBatch.from_json(raw)
+                        response = self.process_resync_batch(batch)
+                    except Exception as e:
+                        logger.error(f"Lote de resync invalido: {e}")
+                        response = ResyncResponse(
+                            tipo="ERROR", mensaje=f"Lote invalido: {e}"
+                        )
+                    rep_socket.send_string(response.to_json())
+            except zmq.ZMQError as e:
+                if self.running:
+                    logger.error(f"Error en el endpoint de resync: {e}")
+            except Exception as e:
+                logger.error(f"Error en el endpoint de resync: {e}")
+
     def run(self):
         """Inicia el servicio de base de datos principal."""
         pc3_host = self.config.get("pc3_host", "localhost")
@@ -205,17 +353,38 @@ class MainDBService:
         hb_pub.bind(f"tcp://{pc3_host}:{self.ports['heartbeat']}")
         logger.info(f"heartbeat PUB bound at tcp://{pc3_host}:{self.ports['heartbeat']}")
 
+        # REP socket: reconciliacion desde la replica tras failover
+        resync_rep = self.context.socket(zmq.REP)
+        resync_rep.bind(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        logger.info(f"resync REP bound at tcp://{pc3_host}:{self.ports['resync_port']}")
+
         # Inicializa la base de datos
         self.db.connect()
         self.db.seed_all(
             self.grid["columns"], self.grid["rows"],
             ["N", "S", "E", "W"]
         )
+
+        # Restaura la sesion y secuencia de replicacion persistidas
+        state = self.db.get_replication_state()
+        self.session_id = state["session_id"] or str(uuid.uuid4())
+        self.sequence_number = state["last_sequence"] or 0
+        self.db.set_replication_state(
+            session_id=self.session_id, last_sequence=self.sequence_number
+        )
+        logger.info(
+            f"Sesion de replicacion {self.session_id[:8]} "
+            f"(ultima secuencia={self.sequence_number})"
+        )
+
         self.running = True
 
         # Inicia el heartbeat en un hilo separado
         hb_thread = threading.Thread(target=self.send_heartbeat, args=(hb_pub,), daemon=True)
         hb_thread.start()
+
+        resync_thread = threading.Thread(target=self.handle_resync, args=(resync_rep,), daemon=True)
+        resync_thread.start()
 
         logger.info("el servicio de base de datos principal esta funcionando")
         record_count = 0
@@ -229,7 +398,8 @@ class MainDBService:
                         self.process_traffic_state(state, rep_pub)
                         record_count += 1
                         if record_count % 100 == 0:
-                            total = self.db.get_event_count()
+                            with self._db_lock:
+                                total = self.db.get_event_count()
                             logger.info(f"procesados {record_count} registros (total en la base de datos: {total})")
                     except Exception as e:
                         logger.error(f"error al procesar el registro: {e}")
@@ -241,6 +411,7 @@ class MainDBService:
             pull_socket.close()
             rep_pub.close()
             hb_pub.close()
+            resync_rep.close()
             self.context.term()
             logger.info(f"el servicio se detuvo correctamente, total de registros: {record_count}")
 

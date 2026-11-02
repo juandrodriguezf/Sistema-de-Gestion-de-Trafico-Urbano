@@ -35,12 +35,13 @@ CREATE TABLE IF NOT EXISTS intersecciones (
 );
 
 CREATE TABLE IF NOT EXISTS eventos (
-    evento_id       TEXT PRIMARY KEY,
-    sensor_id       TEXT NOT NULL,
-    interseccion_id TEXT NOT NULL,
-    tipo_sensor     TEXT NOT NULL,
-    datos           TEXT NOT NULL,
-    timestamp       TEXT NOT NULL
+    evento_id        TEXT PRIMARY KEY,
+    sensor_id        TEXT NOT NULL,
+    interseccion_id  TEXT NOT NULL,
+    tipo_sensor      TEXT NOT NULL,
+    datos            TEXT NOT NULL,
+    timestamp        TEXT NOT NULL,
+    timestamp_sensor TEXT
 );
 
 CREATE TABLE IF NOT EXISTS estado_trafico (
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS estado_trafico (
     D                     REAL,
     vehiculos_por_minuto  REAL,
     estado                TEXT NOT NULL,
-    timestamp             TEXT NOT NULL
+    timestamp             TEXT NOT NULL,
+    message_id            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS semaforos (
@@ -71,6 +73,25 @@ CREATE TABLE IF NOT EXISTS acciones_semaforo (
     origen          TEXT NOT NULL,
     timestamp       TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS failover_outbox (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id  TEXT NOT NULL UNIQUE,
+    tabla       TEXT NOT NULL,
+    operacion   TEXT NOT NULL,
+    datos       TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    sent_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS replication_state (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    session_id    TEXT,
+    last_sequence INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT
+);
 """
 
 
@@ -88,8 +109,33 @@ class DatabaseManager:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA_SQL)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO replication_state (id, last_sequence) VALUES (1, 0)"
+        )
+        self._migrate()
         self.conn.commit()
         logger.info(f"Base de datos conectada: {self.db_path}")
+
+    def _migrate(self):
+        """Aplica migraciones aditivas sobre bases de datos existentes."""
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(eventos)")}
+        if "timestamp_sensor" not in columns:
+            self.conn.execute("ALTER TABLE eventos ADD COLUMN timestamp_sensor TEXT")
+            logger.info("Migracion aplicada: eventos.timestamp_sensor")
+        self.conn.execute(
+            "UPDATE eventos SET timestamp_sensor = timestamp WHERE timestamp_sensor IS NULL"
+        )
+
+        estado_columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(estado_trafico)")
+        }
+        if "message_id" not in estado_columns:
+            self.conn.execute("ALTER TABLE estado_trafico ADD COLUMN message_id TEXT")
+            logger.info("Migracion aplicada: estado_trafico.message_id")
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_estado_trafico_message_id "
+            "ON estado_trafico(message_id) WHERE message_id IS NOT NULL"
+        )
 
     def close(self):
         """Cierra la conexion a la base de datos."""
@@ -157,22 +203,31 @@ class DatabaseManager:
     # ─── Operaciones de eventos ───
 
     def insert_event(self, evento_id: str, sensor_id: str, interseccion_id: str,
-                     tipo_sensor: str, datos: dict, timestamp: str):
-        """Inserta un evento del sensor."""
+                     tipo_sensor: str, datos: dict, timestamp: str,
+                     timestamp_sensor: Optional[str] = None):
+        """Inserta un evento del sensor.
+
+        timestamp: instante en que la BD recibio el evento.
+        timestamp_sensor: instante en que el sensor genero el evento.
+        """
         self.conn.execute(
-            "INSERT OR IGNORE INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (evento_id, sensor_id, interseccion_id, tipo_sensor, json.dumps(datos), timestamp)
+            "INSERT OR IGNORE INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp, timestamp_sensor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (evento_id, sensor_id, interseccion_id, tipo_sensor, json.dumps(datos),
+             timestamp, timestamp_sensor or timestamp)
         )
         self.conn.commit()
 
     # ─── Operaciones de estado de tráfico ───
 
     def insert_traffic_state(self, interseccion_id: str, Q: float, Vp: float,
-                             D: float, veh_min: float, estado: str, timestamp: str):
-        """Inserta una evaluación del estado del tráfico."""
+                             D: float, veh_min: float, estado: str, timestamp: str,
+                             message_id: Optional[str] = None):
+        """Inserta una evaluación del estado del tráfico (idempotente por message_id)."""
         self.conn.execute(
-            "INSERT INTO estado_trafico (interseccion_id, Q, Vp, D, vehiculos_por_minuto, estado, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (interseccion_id, Q, Vp, D, veh_min, estado, timestamp)
+            "INSERT OR IGNORE INTO estado_trafico "
+            "(interseccion_id, Q, Vp, D, vehiculos_por_minuto, estado, timestamp, message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (interseccion_id, Q, Vp, D, veh_min, estado, timestamp, message_id)
         )
         self.conn.execute(
             "UPDATE intersecciones SET estado_trafico = ?, ultima_actualizacion = ? WHERE interseccion_id = ?",
@@ -207,6 +262,28 @@ class DatabaseManager:
             (semaforo_id,)
         ).fetchone()
         return row["estado_actual"] if row else None
+
+    # ─── Existencia (idempotencia de resync) ───
+
+    def event_exists(self, evento_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM eventos WHERE evento_id = ?", (evento_id,)
+        ).fetchone()
+        return row is not None
+
+    def traffic_state_exists(self, message_id: str) -> bool:
+        if not message_id:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM estado_trafico WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return row is not None
+
+    def light_action_exists(self, accion_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM acciones_semaforo WHERE accion_id = ?", (accion_id,)
+        ).fetchone()
+        return row is not None
 
     # ─── Operaciones de consulta ───
 
@@ -292,6 +369,70 @@ class DatabaseManager:
         """Obtiene el número total de eventos almacenados."""
         row = self.conn.execute("SELECT COUNT(*) as cnt FROM eventos").fetchone()
         return row["cnt"]
+
+    # ─── Outbox de failover ───
+
+    def enqueue_outbox(self, message_id: str, tabla: str, operacion: str,
+                       datos: dict, created_at: Optional[str] = None) -> bool:
+        """Encola una escritura pendiente de reconciliar; idempotente por message_id."""
+        created_at = created_at or datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.execute(
+            "INSERT OR IGNORE INTO failover_outbox "
+            "(message_id, tabla, operacion, datos, created_at) VALUES (?, ?, ?, ?, ?)",
+            (message_id, tabla, operacion, json.dumps(datos, ensure_ascii=False), created_at),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_pending_outbox(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Obtiene los mensajes del outbox aun no confirmados, en orden de insercion."""
+        rows = self.conn.execute(
+            "SELECT * FROM failover_outbox WHERE sent_at IS NULL ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_outbox_sent(self, message_id: str, sent_at: Optional[str] = None):
+        """Marca un mensaje del outbox como reconciliado."""
+        sent_at = sent_at or datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE failover_outbox SET sent_at = ?, last_error = NULL WHERE message_id = ?",
+            (sent_at, message_id),
+        )
+        self.conn.commit()
+
+    def mark_outbox_error(self, message_id: str, error: str):
+        """Registra un intento fallido de reconciliacion."""
+        self.conn.execute(
+            "UPDATE failover_outbox SET attempts = attempts + 1, last_error = ? "
+            "WHERE message_id = ?",
+            (error, message_id),
+        )
+        self.conn.commit()
+
+    # ─── Estado de replicacion ───
+
+    def get_replication_state(self) -> Dict[str, Any]:
+        """Devuelve session_id y last_sequence persistidos."""
+        row = self.conn.execute(
+            "SELECT session_id, last_sequence, updated_at FROM replication_state WHERE id = 1"
+        ).fetchone()
+        if not row:
+            return {"session_id": None, "last_sequence": 0, "updated_at": None}
+        return dict(row)
+
+    def set_replication_state(self, session_id: Optional[str] = None,
+                              last_sequence: Optional[int] = None):
+        """Actualiza el estado de replicacion persistido."""
+        current = self.get_replication_state()
+        new_session = session_id if session_id is not None else current["session_id"]
+        new_seq = last_sequence if last_sequence is not None else current["last_sequence"]
+        self.conn.execute(
+            "UPDATE replication_state SET session_id = ?, last_sequence = ?, updated_at = ? "
+            "WHERE id = 1",
+            (new_session, new_seq, datetime.now(timezone.utc).isoformat()),
+        )
+        self.conn.commit()
 
     def get_events_between_dates(self, interseccion_id: str, start: str, end: str) -> List[Dict[str, Any]]:
         """Obtiene eventos de una intersección entre dos timestamps."""
