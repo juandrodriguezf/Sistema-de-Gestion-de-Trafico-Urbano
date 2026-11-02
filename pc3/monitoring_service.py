@@ -36,10 +36,27 @@ class MonitoringService:
         self.ports = config["zmq_ports"]
         self.auth_token = config.get("auth_tokens", {}).get("monitoring", "")
         self.grid = config["grid"]
+        self.timeout_ms = int(config.get("monitoring_timeout_seconds", 5) * 1000)
 
         # ZMQ
         self.context = zmq.Context()
-        self.req_socket = self.context.socket(zmq.REQ)
+        self.req_socket = self._new_socket()
+
+    def _new_socket(self):
+        """Crea un REQ con timeouts de envio y recepcion."""
+        socket = self.context.socket(zmq.REQ)
+        socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
+        socket.setsockopt(zmq.SNDTIMEO, self.timeout_ms)
+        return socket
+
+    def _reset_socket(self):
+        """Recrea el REQ tras un timeout (queda en estado EFSM)."""
+        try:
+            self.req_socket.close(linger=0)
+        except Exception:
+            pass
+        self.req_socket = self._new_socket()
+        self.connect()
 
     def connect(self):
         """Conecta al socket REP de Analytics."""
@@ -49,10 +66,26 @@ class MonitoringService:
         logger.info(f"Conectado a Analytics en {addr}")
 
     def send_request(self, request: MonitoringRequest) -> MonitoringResponse:
-        """envia una solicitud y espera respuesta"""
-        self.req_socket.send_string(request.to_json())
-        raw = self.req_socket.recv_string()
-        return MonitoringResponse.from_json(raw)
+        """envia una solicitud y espera respuesta, con timeout y reset del REQ"""
+        try:
+            self.req_socket.send_string(request.to_json())
+            raw = self.req_socket.recv_string()
+            return MonitoringResponse.from_json(raw)
+        except zmq.error.Again:
+            self._reset_socket()
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje=(
+                    "Timeout esperando respuesta de Analytics "
+                    f"({self.timeout_ms / 1000:.0f}s). Verifica que PC2 este activo."
+                ),
+            )
+        except zmq.ZMQError as e:
+            self._reset_socket()
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje=f"Error de comunicacion con Analytics: {e}",
+            )
 
     def query_intersection(self, interseccion: str):
         """Consulta el estado de una interseccion especifica"""

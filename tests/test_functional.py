@@ -20,8 +20,8 @@ from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION,
 )
 from shared.models import (
-    SensorEvent, TrafficState, LightAction, MonitoringRequest, ResyncBatch,
-    ReplicationMessage,
+    SensorEvent, TrafficState, LightAction, MonitoringRequest, MonitoringResponse,
+    ResyncBatch, ReplicationMessage,
 )
 from shared.validation import validate_sensor_event, validate_override_command, validate_query
 from shared.db_utils import DatabaseManager
@@ -753,6 +753,81 @@ class TestPriorityHold(unittest.TestCase):
         self.assertFalse(self.service._is_priority_held("SEM_C1K1_N"))
         self.assertTrue(any('"ROJO"' in msg for msg in self.service._light_pub.messages))
         self.assertTrue(any('"ROJO"' in msg for msg in self.service._push_socket.messages))
+
+
+class _FakeReqSocket:
+    def __init__(self, exc=None, response=None):
+        self.exc = exc
+        self.response = response
+        self.closed = False
+        self.sent = []
+        self.addr = None
+
+    def send_string(self, msg):
+        self.sent.append(msg)
+        if self.exc:
+            raise self.exc
+
+    def recv_string(self):
+        if self.exc:
+            raise self.exc
+        return self.response
+
+    def close(self, linger=None):
+        self.closed = True
+
+    def connect(self, addr):
+        self.addr = addr
+
+    def setsockopt(self, option, value):
+        self.timeout = value
+
+
+class _FakeContext:
+    def __init__(self):
+        self.sockets = []
+
+    def socket(self, socket_type):
+        sock = _FakeReqSocket()
+        self.sockets.append(sock)
+        return sock
+
+
+class TestMonitoringTimeout(unittest.TestCase):
+    """Verifica que el CLI no se quede bloqueado si Analytics no responde."""
+
+    def setUp(self):
+        from pc3.monitoring_service import MonitoringService
+        self.service = object.__new__(MonitoringService)
+        self.service.config = {
+            "pc2_host": "localhost",
+            "zmq_ports": {"monitoring_to_analytics": 5559},
+        }
+        self.service.ports = self.service.config["zmq_ports"]
+        self.service.timeout_ms = 5000
+        self.service.context = _FakeContext()
+
+    def test_timeout_returns_error_and_resets_socket(self):
+        import zmq
+        old = _FakeReqSocket(exc=zmq.error.Again())
+        self.service.req_socket = old
+
+        response = self.service.send_request(MonitoringRequest(tipo="CONSULTA"))
+
+        self.assertEqual(response.tipo, "ERROR")
+        self.assertIn("Timeout", response.mensaje)
+        self.assertTrue(old.closed)
+        self.assertIsNot(self.service.req_socket, old)
+        self.assertIn("5559", self.service.req_socket.addr)
+
+    def test_successful_response_is_parsed(self):
+        expected = MonitoringResponse(tipo="RESPUESTA", mensaje="ok")
+        self.service.req_socket = _FakeReqSocket(response=expected.to_json())
+
+        response = self.service.send_request(MonitoringRequest(tipo="CONSULTA"))
+
+        self.assertEqual(response.tipo, "RESPUESTA")
+        self.assertEqual(response.mensaje, "ok")
 
 
 class TestViewerDbSelection(unittest.TestCase):

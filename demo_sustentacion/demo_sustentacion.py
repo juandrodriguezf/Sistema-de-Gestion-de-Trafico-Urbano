@@ -61,8 +61,17 @@ pub_socket.connect(f"tcp://{pc1_host}:{ports['broker_frontend']}")
 time.sleep(0.3)
 
 # REQ socket → Analytics (para overrides de ambulancia)
-req_socket = context.socket(zmq.REQ)
-req_socket.connect(f"tcp://{pc2_host}:{ports['monitoring_to_analytics']}")
+REQ_TIMEOUT_MS = int(config.get("monitoring_timeout_seconds", 5) * 1000)
+REQ_ADDR = f"tcp://{pc2_host}:{ports['monitoring_to_analytics']}"
+
+def _new_req_socket():
+    socket = context.socket(zmq.REQ)
+    socket.setsockopt(zmq.RCVTIMEO, REQ_TIMEOUT_MS)
+    socket.setsockopt(zmq.SNDTIMEO, REQ_TIMEOUT_MS)
+    socket.connect(REQ_ADDR)
+    return socket
+
+req_socket = _new_req_socket()
 time.sleep(0.3)
 
 # ─── Iniciar Replica DB (necesaria para consultas históricas) ───
@@ -152,8 +161,18 @@ def send_ambulance_override(col: int, row: int):
         origen="monitoring_service",
         auth_token=monitor_token,
     )
-    req_socket.send_string(req.to_json())
-    raw = req_socket.recv_string()
+    global req_socket
+    try:
+        req_socket.send_string(req.to_json())
+        raw = req_socket.recv_string()
+    except zmq.error.Again:
+        log("AMBULANCIA", "  ! Timeout esperando respuesta de Analytics")
+        try:
+            req_socket.close(linger=0)
+        except Exception:
+            pass
+        req_socket = _new_req_socket()
+        return False
     resp = json.loads(raw)
     return resp.get("tipo", "") == "RESPUESTA"
 

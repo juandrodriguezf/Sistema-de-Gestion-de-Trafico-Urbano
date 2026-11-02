@@ -24,6 +24,7 @@
     },
     "resync_batch_size": 100,
     "resync_timeout_seconds": 5,
+    "monitoring_timeout_seconds": 5,
     "priority_hold_seconds": 30,
     "pc1_host": "192.168.10.6",
     "pc2_host": "192.168.10.6",
