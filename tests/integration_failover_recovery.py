@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -36,6 +37,7 @@ def _main_service(db, session_id="session-integration"):
     service.db = db
     service.sequence_number = 0
     service.session_id = session_id
+    service._db_lock = threading.RLock()
     return service
 
 

@@ -309,6 +309,7 @@ class TestMainDBEventSeparation(unittest.TestCase):
         self.service = object.__new__(MainDBService)
         self.service.db = self.db
         self.service.sequence_number = 0
+        self.service._db_lock = threading.RLock()
 
     def tearDown(self):
         self.db.close()
@@ -413,6 +414,7 @@ class TestMainDBResync(unittest.TestCase):
         self.service = object.__new__(MainDBService)
         self.service.db = self.db
         self.service.sequence_number = 0
+        self.service._db_lock = threading.RLock()
 
     def tearDown(self):
         self.db.close()
@@ -632,6 +634,7 @@ class TestReplicationSession(unittest.TestCase):
         service.db = self.db
         service.sequence_number = 0
         service.session_id = "session-main"
+        service._db_lock = threading.RLock()
 
         self.assertEqual(service._next_sequence(), 1)
         self.assertEqual(service._next_sequence(), 2)

@@ -46,6 +46,8 @@ class MainDBService:
         self.running = False
         self.sequence_number = 0
         self.session_id = ""
+        # Serializa el acceso a SQLite entre el hilo principal y el de resync
+        self._db_lock = threading.RLock()
 
         # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "main_traffic.db")
@@ -56,12 +58,13 @@ class MainDBService:
 
     def _next_sequence(self) -> int:
         """Obtiene y persiste el siguiente numero de secuencia de replicacion."""
-        self.sequence_number += 1
-        try:
-            self.db.set_replication_state(last_sequence=self.sequence_number)
-        except Exception as e:
-            logger.error(f"No se pudo persistir la secuencia de replicacion: {e}")
-        return self.sequence_number
+        with self._db_lock:
+            self.sequence_number += 1
+            try:
+                self.db.set_replication_state(last_sequence=self.sequence_number)
+            except Exception as e:
+                logger.error(f"No se pudo persistir la secuencia de replicacion: {e}")
+            return self.sequence_number
 
     def send_heartbeat(self, hb_pub: zmq.Socket):
         """Envía un heartbeat periódico al servicio de Analytics."""
@@ -98,6 +101,10 @@ class MainDBService:
 
     def process_traffic_state(self, state: TrafficState, rep_pub: zmq.Socket):
         """Procesa y almacena un estado de tráfico desde Analytics."""
+        with self._db_lock:
+            self._process_traffic_state_locked(state, rep_pub)
+
+    def _process_traffic_state_locked(self, state: TrafficState, rep_pub: zmq.Socket):
         try:
             int_id = state.interseccion
             metrics = state.metricas
@@ -209,6 +216,10 @@ class MainDBService:
 
         Returns: "aplicado" | "duplicado".
         """
+        with self._db_lock:
+            return self._apply_resync_message_locked(msg)
+
+    def _apply_resync_message_locked(self, msg: dict) -> str:
         tabla = msg.get("tabla", "")
         operacion = msg.get("operacion", "")
         datos = msg.get("datos") or {}
@@ -273,6 +284,10 @@ class MainDBService:
 
     def process_resync_batch(self, batch: ResyncBatch) -> ResyncResponse:
         """Aplica un lote completo y devuelve el resumen."""
+        with self._db_lock:
+            return self._process_resync_batch_locked(batch)
+
+    def _process_resync_batch_locked(self, batch: ResyncBatch) -> ResyncResponse:
         aplicados = duplicados = errores = 0
         for msg in batch.mensajes:
             try:
@@ -383,7 +398,8 @@ class MainDBService:
                         self.process_traffic_state(state, rep_pub)
                         record_count += 1
                         if record_count % 100 == 0:
-                            total = self.db.get_event_count()
+                            with self._db_lock:
+                                total = self.db.get_event_count()
                             logger.info(f"procesados {record_count} registros (total en la base de datos: {total})")
                     except Exception as e:
                         logger.error(f"error al procesar el registro: {e}")
