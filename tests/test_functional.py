@@ -755,6 +755,51 @@ class TestPriorityHold(unittest.TestCase):
         self.assertTrue(any('"ROJO"' in msg for msg in self.service._push_socket.messages))
 
 
+class TestViewerDbSelection(unittest.TestCase):
+    """Verifica el fallback de visores a la replica con datos mas recientes."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.main_path = os.path.join(self.tmpdir.name, "main.db")
+        self.replica_path = os.path.join(self.tmpdir.name, "replica.db")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _insert(self, path, event_id, ts):
+        db = DatabaseManager(path)
+        db.connect()
+        db.seed_all(1, 1, ["N", "S", "E", "W"])
+        db.insert_event(
+            event_id, "ESP_C1K1", "INT_C1K1", "espira",
+            {"vehiculos_por_minuto": 5}, ts,
+        )
+        db.close()
+
+    def test_prefers_replica_when_newer(self):
+        from shared.viewer_db import select_viewer_db
+        self._insert(self.main_path, "e-main", "2026-01-01T00:00:00Z")
+        self._insert(self.replica_path, "e-rep", "2026-01-01T00:00:05Z")
+        path, label = select_viewer_db(self.main_path, self.replica_path)
+        self.assertEqual(path, self.replica_path)
+        self.assertEqual(label, "replica")
+
+    def test_prefers_main_when_equal_or_newer(self):
+        from shared.viewer_db import select_viewer_db
+        self._insert(self.main_path, "e-main", "2026-01-01T00:00:05Z")
+        self._insert(self.replica_path, "e-rep", "2026-01-01T00:00:05Z")
+        path, label = select_viewer_db(self.main_path, self.replica_path)
+        self.assertEqual(path, self.main_path)
+        self.assertEqual(label, "main")
+
+    def test_falls_back_to_replica_if_main_missing(self):
+        from shared.viewer_db import select_viewer_db
+        self._insert(self.replica_path, "e-rep", "2026-01-01T00:00:05Z")
+        path, label = select_viewer_db(self.main_path, self.replica_path)
+        self.assertEqual(path, self.replica_path)
+        self.assertEqual(label, "replica")
+
+
 class TestSensorFrequency(unittest.TestCase):
     """Verifica que --frequency se propague a los sensores."""
 

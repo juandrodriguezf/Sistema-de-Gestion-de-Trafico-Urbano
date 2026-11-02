@@ -16,6 +16,7 @@ from threading import Thread, Event
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.constants import parse_intersection, display_intersection, parse_semaforo_id, display_semaforo
+from shared.viewer_db import select_viewer_db
 from rich.live import Live
 from rich.table import Table
 from rich.layout import Layout
@@ -63,7 +64,7 @@ def fmt_semaforo(sem_id: str) -> str:
     return sem_id
 
 
-def build_tables(cursor) -> Layout:
+def build_tables(cursor, db_label: str = "main") -> Layout:
     """Construye el layout completo con datos actuales de la BD."""
     layout = Layout()
     layout.split_column(
@@ -83,7 +84,8 @@ def build_tables(cursor) -> Layout:
         active = 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header = Panel(
-        Text(f"LIVE TRAFFIC DASHBOARD  |  Eventos: {count}  |  Sensores: {active}  |  {now}",
+        Text(f"LIVE TRAFFIC DASHBOARD  |  BD: {db_label}  |  Eventos: {count}  |  "
+             f"Sensores: {active}  |  {now}",
              style="bold cyan", justify="center"),
         style="bold green",
     )
@@ -222,50 +224,73 @@ def _build_lights_table(cursor) -> Panel:
 def main():
     parser = argparse.ArgumentParser(description="Live Traffic Database Viewer")
     parser.add_argument("--db-path", default=None,
-                        help="Ruta a la base de datos SQLite (default: data/main_traffic.db)")
+                        help="Ruta a la BD principal (default: data/main_traffic.db)")
+    parser.add_argument("--replica-db-path", default=None,
+                        help="Ruta a la BD replica (default: data/replica_traffic.db)")
     args = parser.parse_args()
 
-    if args.db_path:
-        db_path = args.db_path
-    else:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        db_path = os.path.join(project_root, "data", "main_traffic.db")
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    db_path = args.db_path or os.path.join(project_root, "data", "main_traffic.db")
+    replica_path = args.replica_db_path or os.path.join(
+        project_root, "data", "replica_traffic.db"
+    )
 
     console = Console()
     console.print(f"[bold yellow]Live Viewer iniciado — BD: {db_path}[/]")
+    console.print(f"[dim]Fallback a replica: {replica_path}[/]")
 
     stop_event = Event()
 
     def poll_loop():
         conn = None
+        current_path = db_path
+        current_label = "main"
+        next_check = 0.0
+
         while not stop_event.is_set():
             if conn is None:
+                current_path, current_label = select_viewer_db(db_path, replica_path)
                 try:
-                    conn = sqlite3.connect(db_path)
+                    conn = sqlite3.connect(current_path, timeout=5)
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
                     cursor.execute("SELECT COUNT(*) FROM eventos")
-                    console.print("[green]BD conectada[/]")
+                    console.print(f"[green]BD conectada ({current_label})[/]")
+                    next_check = time.time() + 5
                 except sqlite3.OperationalError as e:
-                    console.print(f"[dim yellow]Esperando BD... ({e})[/]")
+                    console.print(f"[dim yellow]Esperando BD ({current_label})... ({e})[/]")
                     time.sleep(2)
                     continue
 
+            switch_to = None
             try:
                 with Live(console=console, refresh_per_second=0.5, screen=True) as live:
                     while not stop_event.is_set():
+                        if time.time() >= next_check:
+                            next_check = time.time() + 5
+                            selected, label = select_viewer_db(db_path, replica_path)
+                            if selected != current_path:
+                                switch_to = (selected, label)
+                                console.print(f"[yellow]Cambiando a BD {label}...[/]")
+                                break
                         conn.commit()
-                        layout = build_tables(cursor)
+                        layout = build_tables(cursor, current_label)
                         live.update(layout)
                         time.sleep(2)
             except sqlite3.OperationalError:
                 console.print("[yellow]BD desconectada, reconectando...[/]")
-                conn.close()
-                conn = None
             except Exception as e:
                 console.print(f"[red]Error: {e}[/]")
                 time.sleep(2)
-                conn = None
+            finally:
+                if switch_to or conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+                    if switch_to:
+                        current_path, current_label = switch_to
 
     thread = Thread(target=poll_loop, daemon=True)
     thread.start()
