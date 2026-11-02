@@ -69,9 +69,34 @@ time.sleep(0.3)
 
 replica_proc = None
 
+def is_replica_running() -> bool:
+    """Detecta si replica_db.py ya esta corriendo (p. ej. lanzado por start_pc2)."""
+    try:
+        if sys.platform == "win32":
+            ps_cmd = (
+                'Get-CimInstance Win32_Process '
+                '-Filter "Name=\'python.exe\' AND CommandLine LIKE \'%replica_db%\'" '
+                '| Select-Object -ExpandProperty ProcessId'
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            return any(line.strip().isdigit() for line in result.stdout.splitlines())
+        result = subprocess.run(
+            ["pgrep", "-f", "replica_db.py"], capture_output=True
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
 def start_replica_db():
     """Inicia replica_db.py en background para que las consultas históricas funcionen."""
     global replica_proc
+    if is_replica_running():
+        log("INIT", "Replica DB ya esta en ejecucion; no se inicia otra instancia")
+        return
     try:
         python = sys.executable
         replica_path = os.path.join(os.path.dirname(__file__), "..", "pc2", "replica_db.py")
@@ -216,7 +241,8 @@ def demo_kill_db():
     ok = kill_main_db()
     if ok:
         log("FAILOVER", "  ✓ main_db.py terminado")
-        log("FAILOVER", "  → Analytics debería cambiar a BD réplica en ~15s")
+        timeout = config.get("heartbeat_timeout_seconds", 8)
+        log("FAILOVER", f"  → Analytics debería cambiar a BD réplica en ~{timeout}s")
         log("FAILOVER", "  → (heartbeat timeout)")
     else:
         log("FAILOVER", "  ✗ No se pudo matar main_db.py")
