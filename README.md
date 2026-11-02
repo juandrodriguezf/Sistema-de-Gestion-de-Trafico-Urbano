@@ -50,6 +50,7 @@ python pc2/start_pc2.py
 
 # Terminal 3 — PC1 (Sensores + Broker)
 python pc1/start_pc1.py
+python pc1/start_pc1.py --frequency 3   # sobrescribe sensor_frequency_seconds
 ```
 
 ## Uso del Monitoreo (PC3)
@@ -69,6 +70,7 @@ Monitoreo> 6                   # Salir
 
 ```bash
 python -m pytest tests/ -q         # Toda la suite (funcional, failover, override)
+python -m tests.integration_failover_recovery   # Failover + outbox + resync (sin ZMQ)
 python tests/integration_stack_smoke.py   # Opcional: humo PC3 MainDB → PC2 → PC1 (sin TTY en hijos: no usar PIPE sin drenar)
 ```
 
@@ -143,12 +145,23 @@ Monitoreo> 5 B2       # Consulta histórica de B2
 El launcher `pc1/start_pc1.py` acepta un flag para elegir el broker:
 
 ```bash
-python pc1/start_pc1.py                # Broker original (zmq.proxy())
-python pc1/start_pc1.py --threaded     # Broker multihilos (4 hilos Poller+Queue)
+python pc1/start_pc1.py                  # Broker original (zmq.proxy())
+python pc1/start_pc1.py --threaded       # Broker multihilos (4 hilos Poller+Queue)
+python pc1/start_pc1.py --frequency 3    # Sensores cada 3s (override de config.json)
 ```
 
 - **original:** `zmq.proxy()` estándar, recomendado para producción.
 - **threaded:** 4 hilos con `Poller` + `Queue`, útil para experimentos y demostración de escalabilidad.
+- **`--frequency`:** se propaga a cada proceso sensor y tiene prioridad sobre `sensor_frequency_seconds`.
+
+## Failover y recuperación
+
+- Analytics detecta la caída de MainDB por `heartbeat_timeout_seconds` (8s por defecto) y escribe en la réplica local.
+- Durante el failover, cada escritura se registra además en `failover_outbox` para no perderla.
+- Cuando MainDB vuelve, Analytics envía el outbox por lotes al endpoint de resync (`resync_port`, 5562). Solo vuelve a la BD principal cuando MainDB confirma el lote; si falla, reintenta en el siguiente heartbeat.
+- El resync es idempotente: eventos, estados (`message_id`), acciones y semáforos no se duplican.
+- Los overrides de ambulancia mantienen el semáforo en prioridad durante `priority_hold_seconds` (30s) y no son revertidos por los timers normales.
+- Los visores detectan si la réplica tiene datos más recientes y cambian a ella automáticamente.
 
 ## Configuración
 
@@ -163,6 +176,10 @@ Editar `config.json` para cambiar:
 | `thresholds.D_MAX` | Densidad máxima antes de congestión | 20 veh/km |
 | `heartbeat_interval_seconds` | Intervalo de heartbeat | 5s |
 | `heartbeat_timeout_seconds` | Timeout para failover | 8s |
+| `priority_hold_seconds` | Duración del override de ambulancia | 30s |
+| `resync_batch_size` | Mensajes por lote de reconciliación | 100 |
+| `resync_timeout_seconds` | Timeout del REQ de resync | 5s |
+| `monitoring_timeout_seconds` | Timeout del CLI de monitoreo | 5s |
 | `pc*_host` | IPs de cada PC | localhost |
 
 ## Estructura del Proyecto
@@ -196,11 +213,13 @@ entrega1_proyecto/
 │   ├── constants.py         # Nomenclatura y constantes
 │   ├── models.py            # Modelos de mensajes
 │   ├── db_utils.py          # Gestión de BD
+│   ├── viewer_db.py         # Selección main/réplica para visores
 │   └── validation.py        # Validación de mensajes
 ├── tests/                   # Tests
 │   ├── test_functional.py
 │   ├── test_failover.py
 │   ├── test_override.py
+│   ├── integration_failover_recovery.py
 │   ├── integration_stack_smoke.py
 │   ├── run_experiments.py   # Automatización de experimentos (Tabla 1)
 │   └── test_data/
@@ -226,6 +245,7 @@ entrega1_proyecto/
 | Monitoring ↔ Analytics | REQ → REP | 5559 |
 | MainDB → ReplicaDB | PUB → SUB | 5560 |
 | Heartbeat | PUB → SUB | 5561 |
+| ReplicaDB → MainDB (resync) | REQ → REP | 5562 |
 
 ## Documentación
 
