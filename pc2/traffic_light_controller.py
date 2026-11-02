@@ -9,14 +9,11 @@ import json
 import sys
 import os
 import logging
-import uuid
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.models import LightAction
 from shared.constants import VERDE, ROJO, DIRECTIONS
-from shared.db_utils import DatabaseManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [TrafficLights] %(levelname)s: %(message)s")
 logger = logging.getLogger("TrafficLightController")
@@ -26,7 +23,7 @@ class TrafficLightController:
     """
     ADMINISTRA LOS SEMAFOROS.
     Se suscribe a los comandos de Analytics y aplica los cambios de estado.
-    Mantiene el estado en memoria y lo persiste en la base de datos réplica.
+    Mantiene el estado en memoria; la persistencia es responsabilidad exclusiva de MainDB.
     """
 
     def __init__(self, config: dict):
@@ -41,10 +38,6 @@ class TrafficLightController:
 
         # Contexto ZMQ
         self.context = zmq.Context()
-
-        # Replica base de datos para persistencia
-        db_path = os.path.join(os.path.dirname(__file__), "..", "data", "replica_traffic.db")
-        self.db = DatabaseManager(db_path)
 
     def _init_lights(self):
         """Inicializa todos los semaforos con estados alternos."""
@@ -69,24 +62,7 @@ class TrafficLightController:
             return
 
         self.light_states[semaforo_id] = nuevo_estado
-        now = datetime.now(timezone.utc).isoformat()
-
-        logger.info(f"luz cambio en : {semaforo_id} {estado_anterior} → {nuevo_estado} ({razon})")
-
-        # Persistencia en la base de datos
-        try:
-            self.db.update_semaforo(semaforo_id, nuevo_estado, now)
-            self.db.insert_light_action(
-                accion_id=str(uuid.uuid4()),
-                semaforo_id=semaforo_id,
-                estado_anterior=estado_anterior,
-                estado_nuevo=nuevo_estado,
-                razon=razon,
-                origen=origen,
-                timestamp=now,
-            )
-        except Exception as e:
-            logger.error(f"error al escribir en la base de datos: {e}")
+        logger.info(f"luz cambio en : {semaforo_id} {estado_anterior} -> {nuevo_estado} ({razon})")
 
     def get_state(self, semaforo_id: str) -> str:
         """Obtiene el estado actual de un semaforo."""
@@ -102,8 +78,6 @@ class TrafficLightController:
         sub_socket.setsockopt_string(zmq.SUBSCRIBE, "semaforo/")
         logger.info(f"Subscrito a comandos de semaforos en tcp://{pc2_host}:{self.ports['analytics_to_lights']}")
 
-        # Conecta a la base de datos
-        self.db.connect()
         self.running = True
 
         logger.info("el controlador de semaforos se esta ejecutando...")
@@ -131,7 +105,6 @@ class TrafficLightController:
             logger.info("el controlador de semaforos se detuvo por el usuario")
         finally:
             self.running = False
-            self.db.close()
             sub_socket.close()
             self.context.term()
             logger.info(f"el controlador de semaforos se detuvo: {change_count}")

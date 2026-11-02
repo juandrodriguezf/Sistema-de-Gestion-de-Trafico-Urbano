@@ -144,15 +144,20 @@ class MainDBService:
                 "timestamp": ts,
             })
 
-            # Si se tomo una accion, se almacena y se replica
-            if state.accion_tomada:
-                accion = state.accion_tomada
+            # Almacena y replica todas las acciones tomadas (principal y adyacentes)
+            acciones = state.acciones_tomadas or (
+                [state.accion_tomada] if state.accion_tomada else []
+            )
+            for accion in acciones:
                 accion_id = str(uuid.uuid4())
                 sem_id = accion.get("semaforo_id", "")
                 estado_ant = accion.get("estado_anterior", "")
                 estado_new = accion.get("estado_nuevo", "")
                 razon = accion.get("razon", "congestion_detectada")
                 origen = accion.get("origen", "analytics")
+
+                if not sem_id or estado_ant == estado_new:
+                    continue
 
                 self.db.insert_light_action(
                     accion_id=accion_id,

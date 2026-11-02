@@ -69,6 +69,25 @@ class TestModels(unittest.TestCase):
         self.assertEqual(parsed.estado, "congestion")
         self.assertEqual(parsed.metricas["Q"], 7)
 
+    def test_traffic_state_actions_serialization(self):
+        accion = {
+            "tipo": "CAMBIO_LUZ",
+            "semaforo_id": "SEM_C3K2_N",
+            "estado_anterior": "ROJO",
+            "estado_nuevo": "VERDE",
+        }
+        state = TrafficState(
+            interseccion="INT_C3K2",
+            estado="congestion",
+            metricas={"Q": 7},
+            accion_tomada=accion,
+            acciones_tomadas=[accion],
+        )
+        parsed = TrafficState.from_json(state.to_json())
+        self.assertEqual(len(parsed.acciones_tomadas), 1)
+        self.assertEqual(parsed.acciones_tomadas[0]["semaforo_id"], "SEM_C3K2_N")
+        self.assertEqual(parsed.accion_tomada["semaforo_id"], "SEM_C3K2_N")
+
     def test_light_action_serialization(self):
         action = LightAction(
             semaforo_id="SEM_C3K2_N",
@@ -296,6 +315,57 @@ class TestMainDBEventSeparation(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row["cnt"], 1)
 
+    def test_all_actions_are_persisted_and_noops_skipped(self):
+        acciones = [
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_N",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_S",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_E",
+                "estado_anterior": "VERDE", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+        ]
+        state = TrafficState(
+            interseccion="INT_C1K1",
+            estado=CONGESTION,
+            metricas={"Q": 7, "Vp": 20, "D": 25, "vehiculos_por_minuto": 5},
+            acciones_tomadas=acciones,
+        )
+        self.service.process_traffic_state(state, _FakePub())
+
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM acciones_semaforo"
+        ).fetchone()
+        self.assertEqual(row["cnt"], 2)
+        self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_N"), VERDE)
+        self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_S"), VERDE)
+
+    def test_legacy_single_action_is_persisted(self):
+        state = TrafficState(
+            interseccion="INT_C1K1",
+            estado=CONGESTION,
+            metricas={"Q": 7, "Vp": 20, "D": 25, "vehiculos_por_minuto": 5},
+            accion_tomada={
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_N",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+        )
+        self.service.process_traffic_state(state, _FakePub())
+
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM acciones_semaforo"
+        ).fetchone()
+        self.assertEqual(row["cnt"], 1)
+
     def test_real_event_persists_sensor_timestamp(self):
         state = TrafficState(
             interseccion="INT_C1K1",
@@ -316,6 +386,56 @@ class TestMainDBEventSeparation(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["timestamp"], "2026-01-01T00:00:01Z")
         self.assertEqual(row["timestamp_sensor"], "2026-01-01T00:00:00Z")
+
+
+class TestAnalyticsReplicaActions(unittest.TestCase):
+    """Verifica que Analytics registre todas las acciones al escribir en la replica."""
+
+    def setUp(self):
+        from pc2.analytics_service import AnalyticsService
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "replica.db"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+        self.service = object.__new__(AnalyticsService)
+        self.service.replica_db = self.db
+
+    def tearDown(self):
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def test_persist_to_replica_records_all_actions(self):
+        acciones = [
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_N",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_S",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+            {
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_E",
+                "estado_anterior": "VERDE", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            },
+        ]
+        state = TrafficState(
+            interseccion="INT_C1K1",
+            estado=CONGESTION,
+            metricas={"Q": 7, "Vp": 20, "D": 25, "vehiculos_por_minuto": 5},
+            acciones_tomadas=acciones,
+        )
+        self.assertTrue(self.service._persist_to_replica(state))
+
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM acciones_semaforo"
+        ).fetchone()
+        self.assertEqual(row["cnt"], 2)
+        self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_N"), VERDE)
+        self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_S"), VERDE)
 
 
 class TestDatabase(unittest.TestCase):

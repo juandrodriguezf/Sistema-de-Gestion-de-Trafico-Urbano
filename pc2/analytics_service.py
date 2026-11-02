@@ -13,13 +13,13 @@ import time
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.models import (
     SensorEvent, TrafficState, LightAction,
-    MonitoringRequest, MonitoringResponse, Heartbeat, _now
+    MonitoringRequest, MonitoringResponse, Heartbeat
 )
 from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION, PRIORIDAD,
@@ -144,11 +144,12 @@ class AnalyticsService:
         logger.info(f"TIMER: {int_id} volvera a ROJO en 15s")
 
     def _revert_light(self, col: int, row: int, light_pub: zmq.Socket):
-        """Revierte el semáforo N de una intersección a ROJO."""
+        """Revierte el semáforo N de una intersección a ROJO y registra la acción."""
         int_id = f"INT_C{col}K{row}"
         sem_id = f"SEM_C{col}K{row}_N"
         with self._return_lock:
             self._return_timers.pop(int_id, None)
+
         light_cmd = LightAction(
             semaforo_id=sem_id,
             nuevo_estado=ROJO,
@@ -158,6 +159,24 @@ class AnalyticsService:
         topic = semaforo_topic(col, row)
         light_pub.send_string(f"{topic} {light_cmd.to_json()}")
         logger.info(f"TIMER: {sem_id} -> ROJO (normal reanudado)")
+
+        accion = self._build_action(sem_id, ROJO, REASON_NORMAL, ORIGIN_ANALYTICS)
+        if accion is None:
+            logger.info(f"TIMER: {sem_id} ya estaba en ROJO, sin accion que registrar")
+            return
+
+        metrics = dict(
+            self.intersection_metrics.get(
+                int_id, {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0}
+            )
+        )
+        self._persist_traffic_state(TrafficState(
+            interseccion=int_id,
+            estado=NORMAL,
+            metricas=metrics,
+            accion_tomada=accion,
+            acciones_tomadas=[accion],
+        ))
 
     def update_metrics(self, event: SensorEvent):
         """Actualiza las métricas de la intersección a partir de un evento de sensor."""
@@ -185,6 +204,88 @@ class AnalyticsService:
         prefix = self.sensor_token_prefix
         return {sid: prefix + sid for sid in self.registered_sensors}
 
+    def _build_action(self, sem_id: str, nuevo_estado: str,
+                      razon: str, origen: str) -> Optional[dict]:
+        """Construye una accion solo si implica un cambio real de estado."""
+        prev = self.replica_db.get_semaforo_state(sem_id)
+        if prev not in (VERDE, ROJO):
+            prev = ROJO if nuevo_estado == VERDE else VERDE
+        if prev == nuevo_estado:
+            return None
+        return {
+            "tipo": "CAMBIO_LUZ",
+            "semaforo_id": sem_id,
+            "estado_anterior": prev,
+            "estado_nuevo": nuevo_estado,
+            "razon": razon,
+            "origen": origen,
+        }
+
+    @staticmethod
+    def _iter_actions(traffic_state: TrafficState):
+        """Itera las acciones de un estado, con fallback al campo legacy."""
+        if traffic_state.acciones_tomadas:
+            yield from traffic_state.acciones_tomadas
+        elif traffic_state.accion_tomada:
+            yield traffic_state.accion_tomada
+
+    def _persist_traffic_state(self, traffic_state: TrafficState,
+                               push_socket: zmq.Socket = None) -> bool:
+        """Persiste un estado por el unico escritor (MainDB) o en la replica en failover."""
+        if self.use_replica:
+            return self._persist_to_replica(traffic_state)
+
+        socket = push_socket or self._push_socket
+        if socket is None:
+            logger.warning("Sin socket PUSH; estado no persistido")
+            return False
+        try:
+            socket.send_string(traffic_state.to_json(), flags=zmq.NOBLOCK)
+            return True
+        except zmq.error.Again:
+            logger.debug("Socket PUSH lleno o no disponible. Mensaje descartado.")
+            return True
+        except Exception as e:
+            logger.error(f"Error al enviar estado a la BD principal: {e}")
+            return False
+
+    def _persist_to_replica(self, traffic_state: TrafficState) -> bool:
+        """Escribe el estado y todas sus acciones directamente en la replica (failover)."""
+        try:
+            ts = traffic_state.timestamp
+            metrics = traffic_state.metricas
+            int_id = traffic_state.interseccion
+
+            if traffic_state.original_event_id:
+                self.replica_db.insert_event(
+                    traffic_state.original_event_id,
+                    traffic_state.original_sensor_id,
+                    int_id,
+                    traffic_state.original_tipo_sensor,
+                    json.loads(traffic_state.original_datos) if traffic_state.original_datos else metrics,
+                    ts,
+                    timestamp_sensor=traffic_state.original_timestamp or ts,
+                )
+            self.replica_db.insert_traffic_state(
+                int_id, metrics.get("Q", 0), metrics.get("Vp", 0), metrics.get("D", 0),
+                metrics.get("vehiculos_por_minuto", 0), traffic_state.estado, ts,
+            )
+            for accion in self._iter_actions(traffic_state):
+                sem_id = accion.get("semaforo_id", "")
+                estado_ant = accion.get("estado_anterior", "")
+                estado_new = accion.get("estado_nuevo", "")
+                if not sem_id or estado_ant == estado_new:
+                    continue
+                self.replica_db.insert_light_action(
+                    str(uuid.uuid4()), sem_id, estado_ant, estado_new,
+                    accion.get("razon", ""), accion.get("origen", ""), ts,
+                )
+                self.replica_db.update_semaforo(sem_id, estado_new, ts)
+            return True
+        except Exception as e:
+            logger.error(f"Error al escribir en la BD replica: {e}")
+            return False
+
     def process_event(self, event: SensorEvent, push_socket: zmq.Socket, light_pub: zmq.Socket):
         """Procesa un evento de sensor: valida, actualiza, evalua y actúa."""
         # 1. Valida
@@ -206,8 +307,9 @@ class AnalyticsService:
         self._prev_traffic_state[int_id] = estado
         metrics = self.intersection_metrics[int_id].copy()
 
-        # 4. Determina la acción
+        # 4. Determina las acciones (todas las luces modificadas)
         accion = None
+        acciones_tomadas = []
         parts = int_id.replace("INT_C", "").split("K")
         col, row = int(parts[0]), int(parts[1])
 
@@ -239,19 +341,15 @@ class AnalyticsService:
                     topic = semaforo_topic(col, r)
                     light_pub.send_string(f"{topic} {light_cmd.to_json()}")
                     changed.append(sem_id)
-                logger.info(f"OLA VERDE C{col}: {changed}")
 
-                # Acción para la intersección principal
-                sem_id = f"SEM_C{col}K{row}_N"
-                prev = self.replica_db.get_semaforo_state(sem_id)
-                accion = {
-                    "tipo": "CAMBIO_LUZ",
-                    "semaforo_id": sem_id,
-                    "estado_anterior": prev if prev in (VERDE, ROJO) else ROJO,
-                    "estado_nuevo": VERDE,
-                    "razon": REASON_CONGESTION,
-                    "origen": ORIGIN_ANALYTICS,
-                }
+                    accion_sem = self._build_action(
+                        sem_id, VERDE, REASON_CONGESTION, ORIGIN_ANALYTICS
+                    )
+                    if accion_sem:
+                        acciones_tomadas.append(accion_sem)
+                        if r == row:
+                            accion = accion_sem
+                logger.info(f"OLA VERDE C{col}: {changed}")
 
         elif estado == NORMAL and prev_state == CONGESTION:
             # Programa el retorno de esta intersección
@@ -268,6 +366,7 @@ class AnalyticsService:
             estado=estado,
             metricas=metrics,
             accion_tomada=accion,
+            acciones_tomadas=acciones_tomadas,
             original_event_id=event.message_id,
             original_sensor_id=event.sensor_id,
             original_tipo_sensor=event.tipo_sensor,
@@ -275,28 +374,8 @@ class AnalyticsService:
             original_timestamp=event.timestamp,
         )
 
-        # 6. Push a la BD
-        if not self.use_replica:
-            try:
-                db_msg = traffic_state.to_json()
-                push_socket.send_string(db_msg, flags=zmq.NOBLOCK)
-            except zmq.error.Again:
-                logger.debug("Socket PUSH lleno o no disponible. Mensaje descartado.")
-
-        # 7. También almacena el evento en la BD réplica si está en modo de failover
-        if self.use_replica:
-            try:
-                ts = _now()
-                self.replica_db.insert_event(
-                    event.message_id, event.sensor_id, event.interseccion,
-                    event.tipo_sensor, event.datos, ts, timestamp_sensor=event.timestamp
-                )
-                self.replica_db.insert_traffic_state(
-                    int_id, metrics["Q"], metrics["Vp"], metrics["D"],
-                    metrics["vehiculos_por_minuto"], estado, ts
-                )
-            except Exception as e:
-                logger.error(f"Error al escribir en la BD réplica: {e}")
+        # 6. Persiste el estado (MainDB en operacion normal, replica en failover)
+        self._persist_traffic_state(traffic_state, push_socket)
 
     # ═══════════════════════════════════════════
     # Manejador REP de Monitoreo (se ejecuta en hilo)
@@ -416,9 +495,6 @@ class AnalyticsService:
                 mensaje="Servicio de analitica aun no inicializo los sockets ZMQ",
             )
 
-        prev = self.replica_db.get_semaforo_state(sem_id)
-        estado_anterior = prev if prev in (VERDE, ROJO) else ROJO
-
         motivo_l = str(motivo).lower()
         razon = REASON_PRIORITY if "ambulancia" in motivo_l else REASON_MANUAL
 
@@ -438,66 +514,34 @@ class AnalyticsService:
                 mensaje=f"No se pudo enviar el comando al controlador: {e}",
             )
 
+        accion = self._build_action(sem_id, nuevo_estado, razon, ORIGIN_MONITORING)
+        if accion is None:
+            logger.info(f"OVERRIDE: {sem_id} ya estaba en {nuevo_estado}, sin accion que registrar")
+            return MonitoringResponse(
+                tipo="RESPUESTA",
+                datos={"semaforo_id": sem_id, "nuevo_estado": nuevo_estado, "ejecutado": False},
+                mensaje=f"Sin cambio registrado: {sem_id} ya estaba en {nuevo_estado}",
+            )
+
         metrics = dict(
             self.intersection_metrics.get(
                 int_id,
                 {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0},
             )
         )
-        accion = {
-            "tipo": "CAMBIO_LUZ",
-            "semaforo_id": sem_id,
-            "estado_anterior": estado_anterior,
-            "estado_nuevo": nuevo_estado,
-            "razon": razon,
-            "origen": ORIGIN_MONITORING,
-        }
         traffic_state = TrafficState(
             interseccion=int_id,
             estado=PRIORIDAD,
             metricas=metrics,
             accion_tomada=accion,
+            acciones_tomadas=[accion],
         )
 
-        if not self.use_replica:
-            try:
-                self._push_socket.send_string(traffic_state.to_json(), flags=zmq.NOBLOCK)
-            except zmq.error.Again:
-                logger.warning("Override: socket PUSH lleno o no disponible; BD principal puede no reflejar el cambio.")
-            except Exception as e:
-                logger.error(f"Override: error al enviar a la BD principal: {e}")
-                return MonitoringResponse(
-                    tipo="ERROR",
-                    mensaje=f"Comando enviado al semaforo pero fallo la persistencia: {e}",
-                )
-        else:
-            try:
-                ts = _now()
-                self.replica_db.insert_traffic_state(
-                    int_id,
-                    metrics["Q"],
-                    metrics["Vp"],
-                    metrics["D"],
-                    metrics["vehiculos_por_minuto"],
-                    PRIORIDAD,
-                    ts,
-                )
-                self.replica_db.insert_light_action(
-                    str(uuid.uuid4()),
-                    sem_id,
-                    estado_anterior,
-                    nuevo_estado,
-                    razon,
-                    ORIGIN_MONITORING,
-                    ts,
-                )
-                self.replica_db.update_semaforo(sem_id, nuevo_estado, ts)
-            except Exception as e:
-                logger.error(f"Override: error al escribir en la BD replica: {e}")
-                return MonitoringResponse(
-                    tipo="ERROR",
-                    mensaje=f"Comando enviado al semaforo pero fallo la BD replica: {e}",
-                )
+        if not self._persist_traffic_state(traffic_state):
+            return MonitoringResponse(
+                tipo="ERROR",
+                mensaje="Comando enviado al semaforo pero fallo la persistencia",
+            )
 
         logger.info(f"OVERRIDE: {sem_id} -> {nuevo_estado} (motivo: {motivo}, razon: {razon})")
         return MonitoringResponse(

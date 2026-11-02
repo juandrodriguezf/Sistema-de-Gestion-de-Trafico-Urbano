@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 def _now() -> str:
@@ -52,9 +52,11 @@ class SensorEvent:
 class TrafficState:
     """Resultado de la evaluación para una intersección."""
     interseccion: str
-    estado: str               # normal | congestion
+    estado: str               # normal | congestion | prioridad
     metricas: Dict[str, float]
+    # Accion principal (compatibilidad); usar acciones_tomadas para el conjunto completo
     accion_tomada: Optional[Dict[str, str]] = None
+    acciones_tomadas: List[Dict[str, str]] = field(default_factory=list)
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)
     # Trazabilidad: datos originales del SensorEvent que originó este estado
