@@ -45,6 +45,7 @@ class MainDBService:
         self.resync_timeout = config.get("resync_timeout_seconds", 5)
         self.running = False
         self.sequence_number = 0
+        self.session_id = ""
 
         # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "main_traffic.db")
@@ -54,8 +55,12 @@ class MainDBService:
         self.context = zmq.Context()
 
     def _next_sequence(self) -> int:
-        """Obtiene el siguiente número de secuencia para el ordenamiento de la replicación."""
+        """Obtiene y persiste el siguiente numero de secuencia de replicacion."""
         self.sequence_number += 1
+        try:
+            self.db.set_replication_state(last_sequence=self.sequence_number)
+        except Exception as e:
+            logger.error(f"No se pudo persistir la secuencia de replicacion: {e}")
         return self.sequence_number
 
     def send_heartbeat(self, hb_pub: zmq.Socket):
@@ -84,6 +89,7 @@ class MainDBService:
                 operacion=operacion,
                 datos=datos,
                 sequence_number=self._next_sequence(),
+                session_id=self.session_id,
             )
             msg = f"{TOPIC_SYNC} {rep_msg.to_json()}"
             rep_pub.send_string(msg)
@@ -343,6 +349,19 @@ class MainDBService:
             self.grid["columns"], self.grid["rows"],
             ["N", "S", "E", "W"]
         )
+
+        # Restaura la sesion y secuencia de replicacion persistidas
+        state = self.db.get_replication_state()
+        self.session_id = state["session_id"] or str(uuid.uuid4())
+        self.sequence_number = state["last_sequence"] or 0
+        self.db.set_replication_state(
+            session_id=self.session_id, last_sequence=self.sequence_number
+        )
+        logger.info(
+            f"Sesion de replicacion {self.session_id[:8]} "
+            f"(ultima secuencia={self.sequence_number})"
+        )
+
         self.running = True
 
         # Inicia el heartbeat en un hilo separado

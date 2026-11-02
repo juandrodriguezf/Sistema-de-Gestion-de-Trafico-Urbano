@@ -160,6 +160,7 @@ class ReplicationMessage:
     operacion: str            # INSERT | UPDATE
     datos: Dict[str, Any] = field(default_factory=dict)
     sequence_number: int = 0
+    session_id: str = ""
     tipo: str = "SYNC"
     message_id: str = field(default_factory=_uuid)
     timestamp: str = field(default_factory=_now)

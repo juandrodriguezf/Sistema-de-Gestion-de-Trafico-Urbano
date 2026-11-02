@@ -36,6 +36,7 @@ class ReplicaDBService:
         self.grid = config["grid"]
         self.running = False
         self.last_sequence = 0
+        self.session_id = ""
 
         # Base de datos
         db_path = os.path.join(os.path.dirname(__file__), "..", "data", "replica_traffic.db")
@@ -50,6 +51,25 @@ class ReplicaDBService:
             tabla = rep_msg.tabla
             datos = rep_msg.datos
             operacion = rep_msg.operacion
+            seq = rep_msg.sequence_number
+            session = rep_msg.session_id or ""
+
+            # Nueva sesion de MainDB: reinicia el contador de secuencia
+            if session and self.session_id and session != self.session_id:
+                logger.info(
+                    f"Nueva sesion de replicacion {session[:8]}; reiniciando secuencia"
+                )
+                self.session_id = session
+                self.last_sequence = 0
+                self.db.set_replication_state(session_id=session, last_sequence=0)
+            elif session and not self.session_id:
+                self.session_id = session
+                self.db.set_replication_state(session_id=session)
+
+            # Mensaje ya aplicado (o anterior) en esta sesion
+            if seq and seq <= self.last_sequence:
+                logger.debug(f"Replicacion duplicada ignorada: seq={seq}")
+                return
 
             if tabla == "eventos" and operacion == "INSERT":
                 self.db.insert_event(
@@ -89,8 +109,10 @@ class ReplicaDBService:
                     datos.get("timestamp", ""),
                 )
 
-            self.last_sequence = rep_msg.sequence_number
-            logger.debug(f"Replicado: {tabla}/{operacion} seq={rep_msg.sequence_number}")
+            if seq:
+                self.last_sequence = seq
+                self.db.set_replication_state(last_sequence=seq)
+            logger.debug(f"Replicado: {tabla}/{operacion} seq={seq}")
 
         except Exception as e:
             logger.error(f"Error al replicar en {rep_msg.tabla}: {e}")
@@ -111,6 +133,16 @@ class ReplicaDBService:
             self.grid["columns"], self.grid["rows"],
             ["N", "S", "E", "W"]
         )
+
+        state = self.db.get_replication_state()
+        self.session_id = state["session_id"] or ""
+        self.last_sequence = state["last_sequence"] or 0
+        logger.info(
+            f"Estado de replicacion restaurado: sesion="
+            f"{self.session_id[:8] if self.session_id else '-'} "
+            f"last_seq={self.last_sequence}"
+        )
+
         self.running = True
 
         logger.info("el servicio de base de datos replica se esta ejecutando...")

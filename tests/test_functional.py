@@ -21,6 +21,7 @@ from shared.constants import (
 )
 from shared.models import (
     SensorEvent, TrafficState, LightAction, MonitoringRequest, ResyncBatch,
+    ReplicationMessage,
 )
 from shared.validation import validate_sensor_event, validate_override_command, validate_query
 from shared.db_utils import DatabaseManager
@@ -610,6 +611,83 @@ class TestAnalyticsReplicaActions(unittest.TestCase):
         self.assertEqual(row["cnt"], 2)
         self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_N"), VERDE)
         self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_S"), VERDE)
+
+
+class TestReplicationSession(unittest.TestCase):
+    """Verifica la persistencia de sesion/secuencia y el dedupe en la replica."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "db.sqlite"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+
+    def tearDown(self):
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def test_main_sequence_is_persisted(self):
+        from pc3.main_db import MainDBService
+        service = object.__new__(MainDBService)
+        service.db = self.db
+        service.sequence_number = 0
+        service.session_id = "session-main"
+
+        self.assertEqual(service._next_sequence(), 1)
+        self.assertEqual(service._next_sequence(), 2)
+        self.assertEqual(self.db.get_replication_state()["last_sequence"], 2)
+
+    def test_replica_ignores_duplicate_sequence(self):
+        from pc2.replica_db import ReplicaDBService
+        service = object.__new__(ReplicaDBService)
+        service.db = self.db
+        service.session_id = "session-main"
+        service.last_sequence = 0
+
+        msg = ReplicationMessage(
+            tabla="eventos", operacion="INSERT",
+            datos={
+                "evento_id": "evt-1", "sensor_id": "ESP_C1K1",
+                "interseccion_id": "INT_C1K1", "tipo_sensor": "espira",
+                "datos": {"vehiculos_por_minuto": 5},
+                "timestamp": "2026-01-01T00:00:00Z",
+            },
+            sequence_number=1,
+            session_id="session-main",
+        )
+        service.apply_replication(msg)
+        service.apply_replication(msg)
+
+        self.assertEqual(self.db.get_event_count(), 1)
+        self.assertEqual(service.last_sequence, 1)
+        self.assertEqual(self.db.get_replication_state()["last_sequence"], 1)
+
+    def test_replica_accepts_new_session_epoch(self):
+        from pc2.replica_db import ReplicaDBService
+        service = object.__new__(ReplicaDBService)
+        service.db = self.db
+        service.session_id = "session-old"
+        service.last_sequence = 50
+
+        msg = ReplicationMessage(
+            tabla="eventos", operacion="INSERT",
+            datos={
+                "evento_id": "evt-2", "sensor_id": "ESP_C1K1",
+                "interseccion_id": "INT_C1K1", "tipo_sensor": "espira",
+                "datos": {"vehiculos_por_minuto": 5},
+                "timestamp": "2026-01-01T00:00:00Z",
+            },
+            sequence_number=1,
+            session_id="session-new",
+        )
+        service.apply_replication(msg)
+
+        self.assertEqual(self.db.get_event_count(), 1)
+        self.assertEqual(service.session_id, "session-new")
+        self.assertEqual(service.last_sequence, 1)
+        state = self.db.get_replication_state()
+        self.assertEqual(state["session_id"], "session-new")
+        self.assertEqual(state["last_sequence"], 1)
 
 
 class TestPriorityHold(unittest.TestCase):
