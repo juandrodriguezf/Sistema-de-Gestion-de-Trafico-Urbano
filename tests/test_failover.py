@@ -87,9 +87,11 @@ class TestReplicaDBIntegrity(unittest.TestCase):
     def tearDown(self):
         self.main_db.close()
         self.replica_db.close()
-        for p in [self.main_path, self.replica_path]:
-            if os.path.exists(p):
-                os.remove(p)
+        for base in [self.main_path, self.replica_path]:
+            for suffix in ("", "-wal", "-shm"):
+                path = base + suffix
+                if os.path.exists(path):
+                    os.remove(path)
 
     def test_both_dbs_have_same_structure(self):
         """Ambas bases de datos deberian tener el mismo numero de intersecciones y sensores."""

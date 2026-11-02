@@ -904,6 +904,14 @@ class TestSensorFrequency(unittest.TestCase):
             self.assertEqual(freq, 10)
 
 
+class TestFailoverRecoveryIntegration(unittest.TestCase):
+    """Ejecuta el escenario de integracion failover + reconciliacion."""
+
+    def test_end_to_end(self):
+        from tests.integration_failover_recovery import run_integration
+        self.assertTrue(run_integration())
+
+
 class TestDatabase(unittest.TestCase):
     """Test database operations."""
 
@@ -915,10 +923,12 @@ class TestDatabase(unittest.TestCase):
         self.db.seed_all(2, 2, ["N", "S"])
 
     def tearDown(self):
-        """Limpiar la base de datos de prueba."""
+        """Limpiar la base de datos de prueba y sus archivos WAL/SHM."""
         self.db.close()
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        for suffix in ("", "-wal", "-shm"):
+            path = self.db_path + suffix
+            if os.path.exists(path):
+                os.remove(path)
 
     def test_seed_intersections(self):
         rows = self.db.conn.execute("SELECT COUNT(*) as cnt FROM intersecciones").fetchone()
