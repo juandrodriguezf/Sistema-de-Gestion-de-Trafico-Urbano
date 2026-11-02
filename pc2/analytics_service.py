@@ -289,7 +289,7 @@ class AnalyticsService:
                 ts = _now()
                 self.replica_db.insert_event(
                     event.message_id, event.sensor_id, event.interseccion,
-                    event.tipo_sensor, event.datos, ts
+                    event.tipo_sensor, event.datos, ts, timestamp_sensor=event.timestamp
                 )
                 self.replica_db.insert_traffic_state(
                     int_id, metrics["Q"], metrics["Vp"], metrics["D"],

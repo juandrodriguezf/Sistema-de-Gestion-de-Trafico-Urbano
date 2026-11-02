@@ -35,12 +35,13 @@ CREATE TABLE IF NOT EXISTS intersecciones (
 );
 
 CREATE TABLE IF NOT EXISTS eventos (
-    evento_id       TEXT PRIMARY KEY,
-    sensor_id       TEXT NOT NULL,
-    interseccion_id TEXT NOT NULL,
-    tipo_sensor     TEXT NOT NULL,
-    datos           TEXT NOT NULL,
-    timestamp       TEXT NOT NULL
+    evento_id        TEXT PRIMARY KEY,
+    sensor_id        TEXT NOT NULL,
+    interseccion_id  TEXT NOT NULL,
+    tipo_sensor      TEXT NOT NULL,
+    datos            TEXT NOT NULL,
+    timestamp        TEXT NOT NULL,
+    timestamp_sensor TEXT
 );
 
 CREATE TABLE IF NOT EXISTS estado_trafico (
@@ -88,8 +89,19 @@ class DatabaseManager:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA_SQL)
+        self._migrate()
         self.conn.commit()
         logger.info(f"Base de datos conectada: {self.db_path}")
+
+    def _migrate(self):
+        """Aplica migraciones aditivas sobre bases de datos existentes."""
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(eventos)")}
+        if "timestamp_sensor" not in columns:
+            self.conn.execute("ALTER TABLE eventos ADD COLUMN timestamp_sensor TEXT")
+            logger.info("Migracion aplicada: eventos.timestamp_sensor")
+        self.conn.execute(
+            "UPDATE eventos SET timestamp_sensor = timestamp WHERE timestamp_sensor IS NULL"
+        )
 
     def close(self):
         """Cierra la conexion a la base de datos."""
@@ -157,11 +169,17 @@ class DatabaseManager:
     # ─── Operaciones de eventos ───
 
     def insert_event(self, evento_id: str, sensor_id: str, interseccion_id: str,
-                     tipo_sensor: str, datos: dict, timestamp: str):
-        """Inserta un evento del sensor."""
+                     tipo_sensor: str, datos: dict, timestamp: str,
+                     timestamp_sensor: Optional[str] = None):
+        """Inserta un evento del sensor.
+
+        timestamp: instante en que la BD recibio el evento.
+        timestamp_sensor: instante en que el sensor genero el evento.
+        """
         self.conn.execute(
-            "INSERT OR IGNORE INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (evento_id, sensor_id, interseccion_id, tipo_sensor, json.dumps(datos), timestamp)
+            "INSERT OR IGNORE INTO eventos (evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp, timestamp_sensor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (evento_id, sensor_id, interseccion_id, tipo_sensor, json.dumps(datos),
+             timestamp, timestamp_sensor or timestamp)
         )
         self.conn.commit()
 

@@ -7,6 +7,7 @@ Ejecutar con: python -m tests.test_functional (desde la raiz del proyecto)
 import sys
 import os
 import json
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -254,6 +255,69 @@ class TestValidation(unittest.TestCase):
         self.assertIn("Invalid semaforo_id", reason)
 
 
+class _FakePub:
+    """Socket PUB mínimo para probar process_traffic_state sin ZMQ."""
+
+    def __init__(self):
+        self.messages = []
+
+    def send_string(self, msg):
+        self.messages.append(msg)
+
+
+class TestMainDBEventSeparation(unittest.TestCase):
+    """Verifica que solo los eventos reales lleguen a la tabla eventos."""
+
+    def setUp(self):
+        from pc3.main_db import MainDBService
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "main.db"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+        self.service = object.__new__(MainDBService)
+        self.service.db = self.db
+        self.service.sequence_number = 0
+
+    def tearDown(self):
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def test_synthetic_state_does_not_create_event(self):
+        state = TrafficState(
+            interseccion="INT_C1K1",
+            estado=NORMAL,
+            metricas={"Q": 1, "Vp": 40, "D": 5, "vehiculos_por_minuto": 3},
+        )
+        self.service.process_traffic_state(state, _FakePub())
+
+        self.assertEqual(self.db.get_event_count(), 0)
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM estado_trafico"
+        ).fetchone()
+        self.assertEqual(row["cnt"], 1)
+
+    def test_real_event_persists_sensor_timestamp(self):
+        state = TrafficState(
+            interseccion="INT_C1K1",
+            estado=NORMAL,
+            metricas={"Q": 1, "Vp": 40, "D": 5, "vehiculos_por_minuto": 3},
+            original_event_id="evt-real",
+            original_sensor_id="ESP_C1K1",
+            original_tipo_sensor=SENSOR_ESPIRA,
+            original_datos=json.dumps({"vehiculos_por_minuto": 3}),
+            original_timestamp="2026-01-01T00:00:00Z",
+            timestamp="2026-01-01T00:00:01Z",
+        )
+        self.service.process_traffic_state(state, _FakePub())
+
+        row = self.db.conn.execute(
+            "SELECT * FROM eventos WHERE evento_id = 'evt-real'"
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["timestamp"], "2026-01-01T00:00:01Z")
+        self.assertEqual(row["timestamp_sensor"], "2026-01-01T00:00:00Z")
+
+
 class TestDatabase(unittest.TestCase):
     """Test database operations."""
 
@@ -287,6 +351,25 @@ class TestDatabase(unittest.TestCase):
                              {"vehiculos_por_minuto": 10}, "2026-01-01T00:00:00Z")
         count = self.db.get_event_count()
         self.assertEqual(count, 1)
+
+    def test_insert_event_stores_sensor_timestamp(self):
+        self.db.insert_event(
+            "evt-ts", "ESP_C1K1", "INT_C1K1", "espira",
+            {"vehiculos_por_minuto": 10}, "2026-01-01T00:00:05Z",
+            timestamp_sensor="2026-01-01T00:00:00Z",
+        )
+        row = self.db.conn.execute(
+            "SELECT timestamp, timestamp_sensor FROM eventos WHERE evento_id = 'evt-ts'"
+        ).fetchone()
+        self.assertEqual(row["timestamp"], "2026-01-01T00:00:05Z")
+        self.assertEqual(row["timestamp_sensor"], "2026-01-01T00:00:00Z")
+
+    def test_schema_has_timestamp_sensor_column(self):
+        columns = {
+            row["name"]
+            for row in self.db.conn.execute("PRAGMA table_info(eventos)")
+        }
+        self.assertIn("timestamp_sensor", columns)
 
     def test_get_intersection_state(self):
         state = self.db.get_intersection_state("INT_C1K1")

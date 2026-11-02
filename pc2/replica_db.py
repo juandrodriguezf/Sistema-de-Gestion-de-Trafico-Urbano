@@ -59,6 +59,7 @@ class ReplicaDBService:
                     datos.get("tipo_sensor", ""),
                     datos.get("datos", {}),
                     datos.get("timestamp", ""),
+                    timestamp_sensor=datos.get("timestamp_sensor"),
                 )
             elif tabla == "estado_trafico" and operacion == "INSERT":
                 self.db.insert_traffic_state(

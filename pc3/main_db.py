@@ -91,29 +91,36 @@ class MainDBService:
         try:
             int_id = state.interseccion
             metrics = state.metricas
+            ts = state.timestamp
 
-            # Trazabilidad: usa datos originales si están disponibles
+            # Solo los eventos reales de sensores van a la tabla `eventos`.
+            # Los estados generados por Analytics no se registran como eventos sinteticos.
             if state.original_event_id:
                 event_id = state.original_event_id
                 sensor_id = state.original_sensor_id
                 tipo_sensor = state.original_tipo_sensor
                 datos = json.loads(state.original_datos) if state.original_datos else metrics
-            else:
-                event_id = str(uuid.uuid4())
-                sensor_id = "analytics"
-                tipo_sensor = "analysis"
-                datos = metrics
+                timestamp_sensor = state.original_timestamp or ts
 
-            ts = state.timestamp
+                self.db.insert_event(
+                    evento_id=event_id,
+                    sensor_id=sensor_id,
+                    interseccion_id=int_id,
+                    tipo_sensor=tipo_sensor,
+                    datos=datos,
+                    timestamp=ts,
+                    timestamp_sensor=timestamp_sensor,
+                )
 
-            self.db.insert_event(
-                evento_id=event_id,
-                sensor_id=sensor_id,
-                interseccion_id=int_id,
-                tipo_sensor=tipo_sensor,
-                datos=datos,
-                timestamp=ts,
-            )
+                self.publish_replication(rep_pub, "eventos", "INSERT", {
+                    "evento_id": event_id,
+                    "sensor_id": sensor_id,
+                    "interseccion_id": int_id,
+                    "tipo_sensor": tipo_sensor,
+                    "datos": datos,
+                    "timestamp": ts,
+                    "timestamp_sensor": timestamp_sensor,
+                })
 
             # Almacena el estado del trafico
             self.db.insert_traffic_state(
@@ -125,16 +132,6 @@ class MainDBService:
                 estado=state.estado,
                 timestamp=ts,
             )
-
-            # Publica la replicacion del evento
-            self.publish_replication(rep_pub, "eventos", "INSERT", {
-                "evento_id": event_id,
-                "sensor_id": sensor_id,
-                "interseccion_id": int_id,
-                "tipo_sensor": tipo_sensor,
-                "datos": datos,
-                "timestamp": ts,
-            })
 
             # Publica la replicacion del estado del trafico
             self.publish_replication(rep_pub, "estado_trafico", "INSERT", {

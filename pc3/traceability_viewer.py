@@ -65,12 +65,14 @@ def build_events_table(cursor) -> Table:
     table.add_column("sensor_id", width=10, no_wrap=True)
     table.add_column("interseccion_id", width=11, no_wrap=True)
     table.add_column("tipo_sensor", width=8, no_wrap=True)
-    table.add_column("datos", width=50, overflow="fold")
+    table.add_column("datos", width=44, overflow="fold")
+    table.add_column("timestamp_sensor", width=24, no_wrap=True)
     table.add_column("timestamp", width=24, no_wrap=True)
 
     try:
         cursor.execute(
-            "SELECT evento_id, sensor_id, interseccion_id, tipo_sensor, datos, timestamp "
+            "SELECT evento_id, sensor_id, interseccion_id, tipo_sensor, datos, "
+            "timestamp, timestamp_sensor "
             "FROM eventos ORDER BY timestamp DESC LIMIT 20"
         )
         rows = cursor.fetchall()
@@ -93,6 +95,7 @@ def build_events_table(cursor) -> Table:
             Text(fmt_intersection(r["interseccion_id"]), style=style),
             Text(r["tipo_sensor"], style=style),
             Text(payload, style=style),
+            Text(fmt_time(r["timestamp_sensor"]), style=style),
             Text(fmt_time(r["timestamp"]), style=style),
         )
 
