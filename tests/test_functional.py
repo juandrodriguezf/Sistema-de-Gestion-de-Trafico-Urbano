@@ -755,6 +755,35 @@ class TestPriorityHold(unittest.TestCase):
         self.assertTrue(any('"ROJO"' in msg for msg in self.service._push_socket.messages))
 
 
+class TestSensorFrequency(unittest.TestCase):
+    """Verifica que --frequency se propague a los sensores."""
+
+    def test_argv_override_wins_over_config(self):
+        from pc1.sensor import resolve_frequency
+        freq = resolve_frequency(
+            ["sensor.py", "1", "1", "host", "5555", "3.5"],
+            {"sensor_frequency_seconds": 10},
+        )
+        self.assertEqual(freq, 3.5)
+
+    def test_config_fallback_without_override(self):
+        from pc1.sensor import resolve_frequency
+        freq = resolve_frequency(
+            ["sensor.py", "1", "1", "host", "5555"],
+            {"sensor_frequency_seconds": 10},
+        )
+        self.assertEqual(freq, 10)
+
+    def test_invalid_override_falls_back_to_config(self):
+        from pc1.sensor import resolve_frequency
+        for raw in ("0", "-2", "abc"):
+            freq = resolve_frequency(
+                ["sensor.py", "1", "1", "host", "5555", raw],
+                {"sensor_frequency_seconds": 10},
+            )
+            self.assertEqual(freq, 10)
+
+
 class TestDatabase(unittest.TestCase):
     """Test database operations."""
 

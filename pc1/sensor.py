@@ -24,6 +24,18 @@ from shared.constants import sensor_topic
 logger = logging.getLogger(__name__)
 
 
+def resolve_frequency(argv, config: dict) -> float:
+    """Resuelve la frecuencia: argv[5] (override del launcher) o config."""
+    if len(argv) > 5:
+        try:
+            value = float(argv[5])
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    return config.get("sensor_frequency_seconds", 1)
+
+
 class Sensor(ABC):
     """
     Clase base abstracta para todos los sensores.
