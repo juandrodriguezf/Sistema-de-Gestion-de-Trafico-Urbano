@@ -189,7 +189,9 @@ class AnalyticsService:
         """Procesa un evento de sensor: valida, actualiza, evalua y actúa."""
         # 1. Valida
         event_dict = json.loads(event.to_json())
-        valid, reason = validate_sensor_event(event_dict, self.registered_sensors, self._build_auth_tokens())
+        valid, reason = validate_sensor_event(
+            event_dict, self.registered_sensors, self._build_auth_tokens(), self.grid
+        )
         if not valid:
             logger.warning(f"Evento inválido de {event.sensor_id}: {reason}")
             return
@@ -385,7 +387,7 @@ class AnalyticsService:
                 )
 
         elif tipo == CMD_OVERRIDE:
-            valid, reason = validate_override_command(data, self.monitor_token)
+            valid, reason = validate_override_command(data, self.monitor_token, self.grid)
             if not valid:
                 return MonitoringResponse(tipo="ERROR", mensaje=reason)
             return self._execute_override(

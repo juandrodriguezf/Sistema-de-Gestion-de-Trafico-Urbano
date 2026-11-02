@@ -145,3 +145,36 @@ def parse_semaforo_id(sem_id: str) -> Optional[Tuple[int, int, str]]:
     if not m:
         return None
     return int(m.group(1)), int(m.group(2)), m.group(3)
+
+
+def parse_sensor_id(sensor_id_str: str) -> Optional[Tuple[str, int, int]]:
+    """
+    Parsea {PREFIX}_C{col}K{row} → (tipo_sensor, col, row).
+    Retorna None si el formato no es válido.
+    """
+    m = re.match(r"^(ESP|CAM|GPS)_C(\d+)K(\d+)$", sensor_id_str)
+    if not m:
+        return None
+    prefix_to_type = {v: k for k, v in SENSOR_PREFIXES.items()}
+    return prefix_to_type[m.group(1)], int(m.group(2)), int(m.group(3))
+
+
+def _within_grid(col: int, row: int, columns: int, rows: int) -> bool:
+    return 1 <= col <= columns and 1 <= row <= rows
+
+
+def is_valid_intersection_id(int_id: str, columns: int, rows: int) -> bool:
+    """Valida INT_C{col}K{row} y que la posición exista en la grilla."""
+    m = re.match(r"^INT_C(\d+)K(\d+)$", int_id)
+    if not m:
+        return False
+    return _within_grid(int(m.group(1)), int(m.group(2)), columns, rows)
+
+
+def is_valid_semaforo_id(sem_id: str, columns: int, rows: int) -> bool:
+    """Valida SEM_C{col}K{row}_{DIR} y que la posición exista en la grilla."""
+    parsed = parse_semaforo_id(sem_id)
+    if parsed is None:
+        return False
+    col, row, direction = parsed
+    return direction in DIRECTIONS and _within_grid(col, row, columns, rows)

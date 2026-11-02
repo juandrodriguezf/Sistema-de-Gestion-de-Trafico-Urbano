@@ -5,8 +5,17 @@ Valida eventos de sensores, comandos de override e integridad de datos.
 
 import json
 import logging
+import re
 from typing import Tuple, Optional
-from shared.constants import SENSOR_TYPES, SENSOR_PREFIXES, SENSOR_GPS
+from shared.constants import (
+    SENSOR_TYPES,
+    SENSOR_PREFIXES,
+    SENSOR_GPS,
+    intersection_id,
+    is_valid_intersection_id,
+    is_valid_semaforo_id,
+    parse_sensor_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +44,7 @@ DATA_RANGES = {
 
 
 def validate_sensor_event(data: dict, registered_sensors: set = None,
-                          auth_tokens: dict = None) -> Tuple[bool, str]:
+                          auth_tokens: dict = None, grid: dict = None) -> Tuple[bool, str]:
     """
     Valida un mensaje de evento de sensor.
     
@@ -97,15 +106,36 @@ def validate_sensor_event(data: dict, registered_sensors: set = None,
         if nc not in NIVELES_CONGESTION:
             return False, f"Invalid nivel_congestion '{nc}' for GPS. Must be one of {NIVELES_CONGESTION}"
 
-    # 9. Validar formato de interseccion
+    # 9. Validar formato de interseccion y que el sensor pertenezca a ella
     interseccion = data.get("interseccion", "")
-    if not interseccion.startswith("INT_C"):
+    if not re.match(r"^INT_C\d+K\d+$", interseccion):
         return False, f"Invalid interseccion format: '{interseccion}'. Expected 'INT_CxKy'"
+
+    sensor_location = parse_sensor_id(sid)
+    if sensor_location is None:
+        return False, f"Invalid sensor_id format: '{sid}'. Expected '{expected_prefix}_CxKy'"
+
+    _sensor_tipo, sensor_col, sensor_row = sensor_location
+    expected_intersection = intersection_id(sensor_col, sensor_row)
+    if interseccion != expected_intersection:
+        return False, (
+            f"sensor_id '{sid}' belongs to '{expected_intersection}', "
+            f"not '{interseccion}'"
+        )
+
+    # 10. Validar que la posicion exista dentro de la grilla configurada
+    if grid:
+        if not is_valid_intersection_id(interseccion, grid["columns"], grid["rows"]):
+            return False, (
+                f"interseccion '{interseccion}' is outside grid "
+                f"{grid['columns']}x{grid['rows']}"
+            )
 
     return True, ""
 
 
-def validate_override_command(data: dict, valid_auth_token: str = None) -> Tuple[bool, str]:
+def validate_override_command(data: dict, valid_auth_token: str = None,
+                              grid: dict = None) -> Tuple[bool, str]:
     """
     Valida un comando de override del servicio de monitoreo.
     
@@ -135,10 +165,16 @@ def validate_override_command(data: dict, valid_auth_token: str = None) -> Tuple
     if nuevo_estado not in ["VERDE", "ROJO"]:
         return False, f"Invalid nuevo_estado: '{nuevo_estado}'. Must be 'VERDE' or 'ROJO'"
 
-    # 6. Validar formato de semaforo_id
+    # 6. Validar formato de semaforo_id y que exista en la grilla
     sem_id = data.get("semaforo_id", "")
-    if not sem_id.startswith("SEM_C"):
-        return False, f"Invalid semaforo_id format: '{sem_id}'"
+    if not re.match(r"^SEM_C\d+K\d+_[NSEW]$", sem_id):
+        return False, f"Invalid semaforo_id format: '{sem_id}'. Expected 'SEM_CxKy_N|S|E|W'"
+
+    if grid and not is_valid_semaforo_id(sem_id, grid["columns"], grid["rows"]):
+        return False, (
+            f"semaforo_id '{sem_id}' is outside grid "
+            f"{grid['columns']}x{grid['rows']}"
+        )
 
     return True, ""
 

@@ -199,6 +199,60 @@ class TestValidation(unittest.TestCase):
         valid, reason = validate_query(data)
         self.assertTrue(valid, reason)
 
+    def test_sensor_intersection_mismatch(self):
+        data = {
+            "message_id": "test-id",
+            "sensor_id": "ESP_C1K1",
+            "tipo_sensor": "espira",
+            "interseccion": "INT_C2K2",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "datos": {"vehiculos_por_minuto": 10},
+        }
+        valid, reason = validate_sensor_event(data)
+        self.assertFalse(valid)
+        self.assertIn("belongs to", reason)
+
+    def test_sensor_outside_grid(self):
+        data = {
+            "message_id": "test-id",
+            "sensor_id": "ESP_C99K99",
+            "tipo_sensor": "espira",
+            "interseccion": "INT_C99K99",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "datos": {"vehiculos_por_minuto": 10},
+        }
+        valid, reason = validate_sensor_event(data, grid={"columns": 5, "rows": 3})
+        self.assertFalse(valid)
+        self.assertIn("outside grid", reason)
+
+    def test_override_outside_grid(self):
+        data = {
+            "tipo": "OVERRIDE",
+            "semaforo_id": "SEM_C99K99_N",
+            "nuevo_estado": "VERDE",
+            "motivo": "ambulancia",
+            "origen": "monitoring_service",
+            "auth_token": "test-token",
+        }
+        valid, reason = validate_override_command(
+            data, "test-token", grid={"columns": 5, "rows": 3}
+        )
+        self.assertFalse(valid)
+        self.assertIn("outside grid", reason)
+
+    def test_override_invalid_direction(self):
+        data = {
+            "tipo": "OVERRIDE",
+            "semaforo_id": "SEM_C1K1_X",
+            "nuevo_estado": "VERDE",
+            "motivo": "ambulancia",
+            "origen": "monitoring_service",
+            "auth_token": "test-token",
+        }
+        valid, reason = validate_override_command(data, "test-token")
+        self.assertFalse(valid)
+        self.assertIn("Invalid semaforo_id", reason)
+
 
 class TestDatabase(unittest.TestCase):
     """Test database operations."""
