@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -491,6 +492,82 @@ class TestAnalyticsReplicaActions(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.tmpdir.cleanup()
+
+    def _state(self):
+        return TrafficState(
+            interseccion="INT_C1K1",
+            estado=CONGESTION,
+            metricas={"Q": 7, "Vp": 20, "D": 25, "vehiculos_por_minuto": 5},
+            original_event_id="evt-out",
+            original_sensor_id="ESP_C1K1",
+            original_tipo_sensor=SENSOR_ESPIRA,
+            original_datos=json.dumps({"vehiculos_por_minuto": 5}),
+            original_timestamp="2026-01-01T00:00:00Z",
+            acciones_tomadas=[{
+                "tipo": "CAMBIO_LUZ", "semaforo_id": "SEM_C1K1_N",
+                "estado_anterior": "ROJO", "estado_nuevo": "VERDE",
+                "razon": "congestion_detectada", "origen": "analytics",
+            }],
+        )
+
+    def test_persist_to_replica_populates_outbox(self):
+        self.assertTrue(self.service._persist_to_replica(self._state()))
+        pending = self.db.get_pending_outbox()
+        tablas = {row["tabla"] for row in pending}
+        self.assertEqual(tablas, {"eventos", "estado_trafico", "acciones_semaforo", "semaforos"})
+        self.assertEqual(len(pending), 4)
+
+    def test_flush_outbox_marks_messages_sent(self):
+        from shared.models import ResyncResponse
+
+        class _FakeReq:
+            def __init__(self, response):
+                self.response = response
+                self.sent = []
+
+            def send_string(self, msg):
+                self.sent.append(msg)
+
+            def poll(self, timeout):
+                return True
+
+            def recv_string(self):
+                return self.response.to_json()
+
+        self.service._persist_to_replica(self._state())
+        self.service.use_replica = True
+        self.service._failover_lock = threading.RLock()
+        self.service.resync_batch_size = 100
+        self.service.resync_timeout = 1
+        self.service._resync_req = _FakeReq(ResyncResponse(
+            recibidos=4, aplicados=4, duplicados=0, errores=0
+        ))
+
+        self.assertTrue(self.service._flush_outbox())
+        self.assertEqual(len(self.db.get_pending_outbox()), 0)
+
+    def test_flush_outbox_timeout_keeps_pending(self):
+        class _TimeoutReq:
+            def send_string(self, msg):
+                pass
+
+            def poll(self, timeout):
+                return False
+
+            def recv_string(self):
+                raise AssertionError("no deberia recibir respuesta")
+
+        self.service._persist_to_replica(self._state())
+        self.service.use_replica = True
+        self.service._failover_lock = threading.RLock()
+        self.service.resync_batch_size = 100
+        self.service.resync_timeout = 1
+        self.service._resync_req = _TimeoutReq()
+
+        self.assertFalse(self.service._flush_outbox())
+        pending = self.db.get_pending_outbox()
+        self.assertEqual(len(pending), 4)
+        self.assertTrue(all(row["attempts"] == 1 for row in pending))
 
     def test_persist_to_replica_records_all_actions(self):
         acciones = [

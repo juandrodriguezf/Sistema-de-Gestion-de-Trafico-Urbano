@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from shared.models import (
     SensorEvent, TrafficState, LightAction,
-    MonitoringRequest, MonitoringResponse, Heartbeat
+    MonitoringRequest, MonitoringResponse, Heartbeat,
+    ResyncBatch, ResyncResponse, _now,
 )
 from shared.constants import (
     VERDE, ROJO, NORMAL, CONGESTION, PRIORIDAD,
@@ -76,6 +77,10 @@ class AnalyticsService:
         self.use_replica = False
         self.last_heartbeat_time = time.time()
         self.heartbeat_timeout = config.get("heartbeat_timeout_seconds", 15)
+        self.resync_batch_size = config.get("resync_batch_size", 100)
+        self.resync_timeout = config.get("resync_timeout_seconds", 5)
+        self._resync_req = None
+        self._failover_lock = threading.RLock()
 
         # ─── ZMQ Contexto ───
         self.context = zmq.Context()
@@ -232,8 +237,9 @@ class AnalyticsService:
     def _persist_traffic_state(self, traffic_state: TrafficState,
                                push_socket: zmq.Socket = None) -> bool:
         """Persiste un estado por el unico escritor (MainDB) o en la replica en failover."""
-        if self.use_replica:
-            return self._persist_to_replica(traffic_state)
+        with self._failover_lock:
+            if self.use_replica:
+                return self._persist_to_replica(traffic_state)
 
         socket = push_socket or self._push_socket
         if socket is None:
@@ -249,42 +255,182 @@ class AnalyticsService:
             logger.error(f"Error al enviar estado a la BD principal: {e}")
             return False
 
+    def _enqueue_outbox(self, message_id: str, tabla: str,
+                        operacion: str, datos: dict):
+        """Encola una escritura de failover para reconciliarla al volver a main."""
+        self.replica_db.enqueue_outbox(
+            message_id, tabla, operacion, datos, created_at=_now()
+        )
+
     def _persist_to_replica(self, traffic_state: TrafficState) -> bool:
-        """Escribe el estado y todas sus acciones directamente en la replica (failover)."""
+        """Escribe el estado y sus acciones en la replica y los encola en el outbox."""
         try:
             ts = traffic_state.timestamp
             metrics = traffic_state.metricas
             int_id = traffic_state.interseccion
+            base_id = traffic_state.message_id
 
             if traffic_state.original_event_id:
+                event_payload = {
+                    "evento_id": traffic_state.original_event_id,
+                    "sensor_id": traffic_state.original_sensor_id,
+                    "interseccion_id": int_id,
+                    "tipo_sensor": traffic_state.original_tipo_sensor,
+                    "datos": json.loads(traffic_state.original_datos) if traffic_state.original_datos else metrics,
+                    "timestamp": ts,
+                    "timestamp_sensor": traffic_state.original_timestamp or ts,
+                }
                 self.replica_db.insert_event(
-                    traffic_state.original_event_id,
-                    traffic_state.original_sensor_id,
-                    int_id,
-                    traffic_state.original_tipo_sensor,
-                    json.loads(traffic_state.original_datos) if traffic_state.original_datos else metrics,
-                    ts,
-                    timestamp_sensor=traffic_state.original_timestamp or ts,
+                    event_payload["evento_id"],
+                    event_payload["sensor_id"],
+                    event_payload["interseccion_id"],
+                    event_payload["tipo_sensor"],
+                    event_payload["datos"],
+                    event_payload["timestamp"],
+                    timestamp_sensor=event_payload["timestamp_sensor"],
                 )
+                self._enqueue_outbox(f"{base_id}:evento", "eventos", "INSERT", event_payload)
+
+            state_payload = {
+                "interseccion_id": int_id,
+                "Q": metrics.get("Q", 0),
+                "Vp": metrics.get("Vp", 0),
+                "D": metrics.get("D", 0),
+                "vehiculos_por_minuto": metrics.get("vehiculos_por_minuto", 0),
+                "estado": traffic_state.estado,
+                "timestamp": ts,
+                "message_id": base_id,
+            }
             self.replica_db.insert_traffic_state(
-                int_id, metrics.get("Q", 0), metrics.get("Vp", 0), metrics.get("D", 0),
-                metrics.get("vehiculos_por_minuto", 0), traffic_state.estado, ts,
-                message_id=traffic_state.message_id,
+                state_payload["interseccion_id"],
+                state_payload["Q"],
+                state_payload["Vp"],
+                state_payload["D"],
+                state_payload["vehiculos_por_minuto"],
+                state_payload["estado"],
+                state_payload["timestamp"],
+                message_id=base_id,
             )
+            self._enqueue_outbox(f"{base_id}:estado", "estado_trafico", "INSERT", state_payload)
+
             for accion in self._iter_actions(traffic_state):
                 sem_id = accion.get("semaforo_id", "")
                 estado_ant = accion.get("estado_anterior", "")
                 estado_new = accion.get("estado_nuevo", "")
                 if not sem_id or estado_ant == estado_new:
                     continue
+
+                accion_id = str(uuid.uuid4())
+                accion_payload = {
+                    "accion_id": accion_id,
+                    "semaforo_id": sem_id,
+                    "estado_anterior": estado_ant,
+                    "estado_nuevo": estado_new,
+                    "razon": accion.get("razon", ""),
+                    "origen": accion.get("origen", ""),
+                    "timestamp": ts,
+                }
                 self.replica_db.insert_light_action(
-                    str(uuid.uuid4()), sem_id, estado_ant, estado_new,
-                    accion.get("razon", ""), accion.get("origen", ""), ts,
+                    accion_id, sem_id, estado_ant, estado_new,
+                    accion_payload["razon"], accion_payload["origen"], ts,
                 )
+                self._enqueue_outbox(
+                    f"{base_id}:accion:{accion_id}", "acciones_semaforo",
+                    "INSERT", accion_payload,
+                )
+
+                sem_payload = {
+                    "semaforo_id": sem_id,
+                    "estado_actual": estado_new,
+                    "timestamp": ts,
+                }
                 self.replica_db.update_semaforo(sem_id, estado_new, ts)
+                self._enqueue_outbox(
+                    f"{base_id}:semaforo:{sem_id}", "semaforos", "UPDATE", sem_payload,
+                )
             return True
         except Exception as e:
             logger.error(f"Error al escribir en la BD replica: {e}")
+            return False
+
+    def _flush_outbox(self) -> bool:
+        """Reconcilia el outbox contra MainDB antes de volver a la BD principal."""
+        with self._failover_lock:
+            if not self.use_replica:
+                return True
+
+            while True:
+                pending = self.replica_db.get_pending_outbox(self.resync_batch_size)
+                if not pending:
+                    return True
+                if not self._send_outbox_batch(pending):
+                    return False
+
+    def _reset_resync_socket(self):
+        """Recrea el socket REQ tras un timeout (REQ queda en estado EFSM)."""
+        old = self._resync_req
+        if old is not None and hasattr(old, "close"):
+            try:
+                old.close()
+            except Exception:
+                pass
+        try:
+            pc3_host = self.config.get("pc3_host", "localhost")
+            self._resync_req = self.context.socket(zmq.REQ)
+            self._resync_req.connect(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        except Exception as e:
+            self._resync_req = None
+            logger.error(f"No se pudo recrear el socket de resync: {e}")
+
+    def _send_outbox_batch(self, pending: list) -> bool:
+        """Envia un lote del outbox al endpoint de resync de MainDB."""
+        if self._resync_req is None:
+            logger.error("Sin socket de resync; no se puede reconciliar el outbox")
+            return False
+
+        mensajes = []
+        for row in pending:
+            try:
+                datos = json.loads(row["datos"])
+            except Exception as e:
+                self.replica_db.mark_outbox_error(row["message_id"], f"JSON invalido: {e}")
+                return False
+            mensajes.append({
+                "message_id": row["message_id"],
+                "tabla": row["tabla"],
+                "operacion": row["operacion"],
+                "datos": datos,
+            })
+
+        batch = ResyncBatch(mensajes=mensajes)
+        try:
+            self._resync_req.send_string(batch.to_json())
+            if not self._resync_req.poll(self.resync_timeout * 1000):
+                for row in pending:
+                    self.replica_db.mark_outbox_error(row["message_id"], "timeout de resync")
+                logger.warning("Resync sin respuesta de MainDB; se mantiene la replica")
+                self._reset_resync_socket()
+                return False
+
+            response = ResyncResponse.from_json(self._resync_req.recv_string())
+            if response.tipo == "ERROR" or response.errores:
+                for row in pending:
+                    self.replica_db.mark_outbox_error(row["message_id"], response.mensaje)
+                logger.warning(f"Resync rechazado por MainDB: {response.mensaje}")
+                return False
+
+            for row in pending:
+                self.replica_db.mark_outbox_sent(row["message_id"])
+            logger.info(
+                f"Outbox reconciliado: {response.aplicados} aplicados, "
+                f"{response.duplicados} duplicados"
+            )
+            return True
+        except Exception as e:
+            for row in pending:
+                self.replica_db.mark_outbox_error(row["message_id"], str(e))
+            logger.error(f"Error al enviar lote de resync: {e}")
+            self._reset_resync_socket()
             return False
 
     def process_event(self, event: SensorEvent, push_socket: zmq.Socket, light_pub: zmq.Socket):
@@ -557,25 +703,52 @@ class AnalyticsService:
 
     def monitor_heartbeat(self, hb_socket: zmq.Socket):
         """Monitorea el heartbeat de PC3. Cambia a réplica si hay timeout."""
-        logger.info(f"Monitor de heartbeat iniciado (timeout={self.heartbeat_timeout}s)")
-        while self.running:
-            try:
-                if hb_socket.poll(1000):
-                    msg = hb_socket.recv_string()
-                    self.last_heartbeat_time = time.time()
-                    if self.use_replica:
-                        logger.info("Heartbeat de PC3 restaurado! Volviendo a la BD principal")
-                        self.use_replica = False
+        pc3_host = self.config.get("pc3_host", "localhost")
+        resync_req = self.context.socket(zmq.REQ)
+        resync_req.connect(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        self._resync_req = resync_req
+        logger.info(
+            f"Monitor de heartbeat iniciado (timeout={self.heartbeat_timeout}s, "
+            f"resync=tcp://{pc3_host}:{self.ports['resync_port']})"
+        )
+        try:
+            while self.running:
+                try:
+                    if hb_socket.poll(1000):
+                        msg = hb_socket.recv_string()
+                        self.last_heartbeat_time = time.time()
+                        if self.use_replica:
+                            with self._failover_lock:
+                                if self._flush_outbox():
+                                    self.use_replica = False
+                                    logger.info(
+                                        "Heartbeat de PC3 restaurado y outbox reconciliado! "
+                                        "Volviendo a la BD principal"
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Heartbeat restaurado pero el outbox no se pudo "
+                                        "reconciliar; se mantiene la BD replica"
+                                    )
 
-                # Verificar timeout
-                elapsed = time.time() - self.last_heartbeat_time
-                if elapsed > self.heartbeat_timeout and not self.use_replica:
-                    logger.warning(f"PC3 heartbeat se quedo sin pulso ({elapsed:.0f}s). Cambiando a BD Réplica!")
-                    self.use_replica = True
+                    # Verificar timeout
+                    elapsed = time.time() - self.last_heartbeat_time
+                    with self._failover_lock:
+                        if elapsed > self.heartbeat_timeout and not self.use_replica:
+                            logger.warning(
+                                f"PC3 heartbeat se quedo sin pulso ({elapsed:.0f}s). "
+                                "Cambiando a BD Réplica!"
+                            )
+                            self.use_replica = True
 
-            except zmq.ZMQError:
-                if self.running:
-                    time.sleep(1)
+                except zmq.ZMQError:
+                    if self.running:
+                        time.sleep(1)
+        finally:
+            req = self._resync_req
+            self._resync_req = None
+            if req is not None and hasattr(req, "close"):
+                req.close()
 
     # ═══════════════════════════════════════════
     # Bucle principal
