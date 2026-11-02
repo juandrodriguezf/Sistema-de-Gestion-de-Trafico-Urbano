@@ -9,6 +9,7 @@ import os
 import json
 import tempfile
 import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -283,8 +284,16 @@ class _FakePub:
     def __init__(self):
         self.messages = []
 
-    def send_string(self, msg):
+    def send_string(self, msg, flags=0):
         self.messages.append(msg)
+
+
+class _FakeTimer:
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
 
 
 class TestMainDBEventSeparation(unittest.TestCase):
@@ -601,6 +610,71 @@ class TestAnalyticsReplicaActions(unittest.TestCase):
         self.assertEqual(row["cnt"], 2)
         self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_N"), VERDE)
         self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_S"), VERDE)
+
+
+class TestPriorityHold(unittest.TestCase):
+    """Verifica que un override de prioridad no sea revertido por timers normales."""
+
+    def setUp(self):
+        from pc2.analytics_service import AnalyticsService
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "replica.db"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+        self.db.update_semaforo("SEM_C1K1_N", ROJO, "2026-01-01T00:00:00Z")
+
+        self.service = object.__new__(AnalyticsService)
+        self.service.replica_db = self.db
+        self.service.intersection_metrics = {
+            "INT_C1K1": {"Q": 1, "Vp": 40, "D": 5, "vehiculos_por_minuto": 3}
+        }
+        self.service._return_lock = threading.RLock()
+        self.service._return_timers = {}
+        self.service._priority_holds = {}
+        self.service._priority_timers = {}
+        self.service.priority_hold_seconds = 30
+        self.service.use_replica = False
+        self.service._failover_lock = threading.RLock()
+        self.service._push_socket = _FakePub()
+        self.service._light_pub = _FakePub()
+
+    def tearDown(self):
+        for timer in self.service._priority_timers.values():
+            timer.cancel()
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def test_priority_override_cancels_normal_timer_and_sets_hold(self):
+        normal_timer = _FakeTimer()
+        self.service._return_timers["INT_C1K1"] = normal_timer
+
+        response = self.service._execute_override(
+            "SEM_C1K1_N", VERDE, "ambulancia"
+        )
+
+        self.assertTrue(response.datos["ejecutado"])
+        self.assertTrue(normal_timer.cancelled)
+        self.assertNotIn("INT_C1K1", self.service._return_timers)
+        self.assertTrue(self.service._is_priority_held("SEM_C1K1_N"))
+        self.assertIn("SEM_C1K1_N", self.service._priority_timers)
+
+    def test_normal_return_not_scheduled_during_priority_hold(self):
+        self.service._priority_holds["SEM_C1K1_N"] = time.time() + 60
+
+        self.service._schedule_normal_return(1, 1, self.service._light_pub)
+
+        self.assertNotIn("INT_C1K1", self.service._return_timers)
+
+    def test_priority_expiry_reverts_to_red_and_clears_hold(self):
+        self.db.update_semaforo("SEM_C1K1_N", VERDE, "2026-01-01T00:00:01Z")
+        self.service._priority_holds["SEM_C1K1_N"] = time.time() + 60
+        self.service._priority_timers["SEM_C1K1_N"] = _FakeTimer()
+
+        self.service._revert_priority(1, 1, "SEM_C1K1_N")
+
+        self.assertFalse(self.service._is_priority_held("SEM_C1K1_N"))
+        self.assertTrue(any('"ROJO"' in msg for msg in self.service._light_pub.messages))
+        self.assertTrue(any('"ROJO"' in msg for msg in self.service._push_socket.messages))
 
 
 class TestDatabase(unittest.TestCase):

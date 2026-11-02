@@ -63,7 +63,11 @@ class AnalyticsService:
         # Seguimiento de estado previo y timers de retorno (15s)
         self._prev_traffic_state: dict = {}
         self._return_timers: dict = {}
-        self._return_lock = threading.Lock()
+        self._return_lock = threading.RLock()
+        # Overrides de prioridad: sem_id -> expiración y timer de auto-reversión
+        self.priority_hold_seconds = config.get("priority_hold_seconds", 30)
+        self._priority_holds: dict = {}
+        self._priority_timers: dict = {}
 
         # ─── Auth ───
         self.sensor_token_prefix = config.get("auth_tokens", {}).get("sensors_prefix", "")
@@ -134,10 +138,25 @@ class AnalyticsService:
             return CONGESTION
         return NORMAL
 
+    def _is_priority_held(self, sem_id: str) -> bool:
+        """Indica si un semaforo esta bajo un override de prioridad vigente."""
+        with self._return_lock:
+            deadline = self._priority_holds.get(sem_id)
+            if deadline is None:
+                return False
+            if time.time() >= deadline:
+                self._priority_holds.pop(sem_id, None)
+                return False
+            return True
+
     def _schedule_normal_return(self, col: int, row: int, light_pub: zmq.Socket):
         """Programa el cambio de VERDE a ROJO después de 15s en condiciones normales."""
         int_id = f"INT_C{col}K{row}"
+        sem_id = f"SEM_C{col}K{row}_N"
         with self._return_lock:
+            if self._is_priority_held(sem_id):
+                logger.info(f"TIMER: {sem_id} bajo prioridad, no se programa retorno normal")
+                return
             timer = self._return_timers.pop(int_id, None)
             if timer:
                 timer.cancel()
@@ -154,6 +173,9 @@ class AnalyticsService:
         sem_id = f"SEM_C{col}K{row}_N"
         with self._return_lock:
             self._return_timers.pop(int_id, None)
+            if self._is_priority_held(sem_id):
+                logger.info(f"TIMER: {sem_id} bajo prioridad, se cancela retorno normal")
+                return
 
         light_cmd = LightAction(
             semaforo_id=sem_id,
@@ -182,6 +204,47 @@ class AnalyticsService:
             accion_tomada=accion,
             acciones_tomadas=[accion],
         ))
+
+    def _revert_priority(self, col: int, row: int, sem_id: str):
+        """Finaliza el hold de prioridad y devuelve el semaforo a ROJO."""
+        int_id = f"INT_C{col}K{row}"
+        with self._return_lock:
+            self._priority_holds.pop(sem_id, None)
+            self._priority_timers.pop(sem_id, None)
+
+        if self._light_pub is None:
+            logger.warning(f"PRIORIDAD: {sem_id} expiro sin socket de luces disponible")
+            return
+
+        light_cmd = LightAction(
+            semaforo_id=sem_id,
+            nuevo_estado=ROJO,
+            razon=REASON_NORMAL,
+            origen=ORIGIN_ANALYTICS,
+        )
+        topic = semaforo_topic(col, row)
+        self._light_pub.send_string(f"{topic} {light_cmd.to_json()}")
+
+        accion = self._build_action(sem_id, ROJO, REASON_NORMAL, ORIGIN_ANALYTICS)
+        if accion is None:
+            logger.info(f"PRIORIDAD: {sem_id} ya estaba en ROJO, sin accion que registrar")
+            return
+
+        metrics = dict(
+            self.intersection_metrics.get(
+                int_id, {"Q": 0.0, "Vp": 50.0, "D": 0.0, "vehiculos_por_minuto": 0.0}
+            )
+        )
+        self._persist_traffic_state(TrafficState(
+            interseccion=int_id,
+            estado=NORMAL,
+            metricas=metrics,
+            accion_tomada=accion,
+            acciones_tomadas=[accion],
+        ))
+        logger.info(
+            f"PRIORIDAD: {sem_id} revertida a ROJO tras {self.priority_hold_seconds}s"
+        )
 
     def update_metrics(self, event: SensorEvent):
         """Actualiza las métricas de la intersección a partir de un evento de sensor."""
@@ -479,6 +542,9 @@ class AnalyticsService:
                 changed = []
                 for r in affected_rows:
                     sem_id = f"SEM_C{col}K{r}_N"
+                    if self._is_priority_held(sem_id):
+                        logger.info(f"OLA VERDE: {sem_id} bajo prioridad, se omite")
+                        continue
                     light_cmd = LightAction(
                         semaforo_id=sem_id,
                         nuevo_estado=VERDE,
@@ -660,6 +726,26 @@ class AnalyticsService:
                 tipo="ERROR",
                 mensaje=f"No se pudo enviar el comando al controlador: {e}",
             )
+
+        with self._return_lock:
+            previous_hold = self._priority_timers.pop(sem_id, None)
+            if previous_hold:
+                previous_hold.cancel()
+            if razon == REASON_PRIORITY:
+                normal_timer = self._return_timers.pop(int_id, None)
+                if normal_timer:
+                    normal_timer.cancel()
+                self._priority_holds[sem_id] = time.time() + self.priority_hold_seconds
+                hold_timer = threading.Timer(
+                    self.priority_hold_seconds,
+                    self._revert_priority,
+                    args=[col, row, sem_id],
+                )
+                hold_timer.daemon = True
+                self._priority_timers[sem_id] = hold_timer
+                hold_timer.start()
+            else:
+                self._priority_holds.pop(sem_id, None)
 
         accion = self._build_action(sem_id, nuevo_estado, razon, ORIGIN_MONITORING)
         if accion is None:
