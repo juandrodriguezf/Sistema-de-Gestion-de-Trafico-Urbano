@@ -131,6 +131,7 @@ class MainDBService:
                 veh_min=metrics.get("vehiculos_por_minuto", 0),
                 estado=state.estado,
                 timestamp=ts,
+                message_id=state.message_id,
             )
 
             # Publica la replicacion del estado del trafico
@@ -142,6 +143,7 @@ class MainDBService:
                 "vehiculos_por_minuto": metrics.get("vehiculos_por_minuto", 0),
                 "estado": state.estado,
                 "timestamp": ts,
+                "message_id": state.message_id,
             })
 
             # Almacena y replica todas las acciones tomadas (principal y adyacentes)

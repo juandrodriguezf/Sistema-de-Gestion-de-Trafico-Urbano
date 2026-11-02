@@ -491,6 +491,46 @@ class TestDatabase(unittest.TestCase):
         }
         self.assertIn("timestamp_sensor", columns)
 
+    def test_schema_has_outbox_and_replication_state(self):
+        tables = {
+            row["name"]
+            for row in self.db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        self.assertIn("failover_outbox", tables)
+        self.assertIn("replication_state", tables)
+
+    def test_traffic_state_message_id_is_idempotent(self):
+        for _ in range(2):
+            self.db.insert_traffic_state(
+                "INT_C1K1", 1, 40, 5, 3, NORMAL, "2026-01-01T00:00:00Z",
+                message_id="msg-1",
+            )
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM estado_trafico WHERE message_id = 'msg-1'"
+        ).fetchone()
+        self.assertEqual(row["cnt"], 1)
+
+    def test_outbox_dedupes_by_message_id(self):
+        self.assertTrue(self.db.enqueue_outbox(
+            "out-1", "estado_trafico", "INSERT", {"interseccion_id": "INT_C1K1"}
+        ))
+        self.assertFalse(self.db.enqueue_outbox(
+            "out-1", "estado_trafico", "INSERT", {"interseccion_id": "INT_C1K1"}
+        ))
+        self.assertEqual(len(self.db.get_pending_outbox()), 1)
+
+        self.db.mark_outbox_sent("out-1")
+        self.assertEqual(len(self.db.get_pending_outbox()), 0)
+
+    def test_replication_state_roundtrip(self):
+        self.assertEqual(self.db.get_replication_state()["last_sequence"], 0)
+        self.db.set_replication_state(session_id="session-a", last_sequence=42)
+        state = self.db.get_replication_state()
+        self.assertEqual(state["session_id"], "session-a")
+        self.assertEqual(state["last_sequence"], 42)
+
     def test_get_intersection_state(self):
         state = self.db.get_intersection_state("INT_C1K1")
         self.assertIsNotNone(state)

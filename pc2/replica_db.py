@@ -70,6 +70,7 @@ class ReplicaDBService:
                     datos.get("vehiculos_por_minuto", 0),
                     datos.get("estado", "normal"),
                     datos.get("timestamp", ""),
+                    message_id=datos.get("message_id"),
                 )
             elif tabla == "acciones_semaforo" and operacion == "INSERT":
                 self.db.insert_light_action(

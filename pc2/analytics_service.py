@@ -269,6 +269,7 @@ class AnalyticsService:
             self.replica_db.insert_traffic_state(
                 int_id, metrics.get("Q", 0), metrics.get("Vp", 0), metrics.get("D", 0),
                 metrics.get("vehiculos_por_minuto", 0), traffic_state.estado, ts,
+                message_id=traffic_state.message_id,
             )
             for accion in self._iter_actions(traffic_state):
                 sem_id = accion.get("semaforo_id", "")
