@@ -1,11 +1,11 @@
 """
 demo_sustentacion.py - Script único para demo de sustentación.
 Cronograma en tiempo real:
-  t=60s  → Congestión en C2K2
-  t=95s  → Congestión en C4K3
-  t=130s → Ambulancia fila 1
-  t=140s → Caída BD principal
-  t=150s → Segunda ambulancia fila 1
+  t=60s  -> Congestión en C2K2
+  t=95s  -> Congestión en C4K3
+  t=130s -> Ambulancia fila 1
+  t=140s -> Caída BD principal
+  t=150s -> Segunda ambulancia fila 1
 """
 
 import zmq
@@ -55,12 +55,12 @@ def log(tag: str, msg: str):
 
 context = zmq.Context()
 
-# PUB socket → Broker (para enviar eventos de sensores falsos)
+# PUB socket -> Broker (para enviar eventos de sensores falsos)
 pub_socket = context.socket(zmq.PUB)
 pub_socket.connect(f"tcp://{pc1_host}:{ports['broker_frontend']}")
 time.sleep(0.3)
 
-# REQ socket → Analytics (para overrides de ambulancia)
+# REQ socket -> Analytics (para overrides de ambulancia)
 REQ_TIMEOUT_MS = int(config.get("monitoring_timeout_seconds", 5) * 1000)
 REQ_ADDR = f"tcp://{pc2_host}:{ports['monitoring_to_analytics']}"
 
@@ -124,7 +124,7 @@ def start_replica_db():
         time.sleep(1)
     except Exception as e:
         log("ERROR", f"No se pudo iniciar Replica DB: {e}")
-        log("ERROR", "  → Las consultas históricas (cmd 5) no funcionarán")
+        log("ERROR", "  -> Las consultas históricas (cmd 5) no funcionarán")
 
 # ─── Enviar evento de sensor falso ───
 
@@ -212,33 +212,33 @@ def demo_congestion_b2():
     """t=60s: Congestión en B2"""
     label = display_intersection(2, 2)
     log("CONGESTION", f"Enviando congestión a {label}")
-    log("CONGESTION", f"  → Sensor camara: longitud_cola=15 (umbral=5)")
+    log("CONGESTION", f"  -> Sensor camara: longitud_cola=15 (umbral=5)")
     send_sensor_event(2, 2, SENSOR_CAMARA, {"longitud_cola": 15})
     time.sleep(0.1)
-    log("CONGESTION", f"  → Sensor GPS: velocidad=8, densidad=35")
+    log("CONGESTION", f"  -> Sensor GPS: velocidad=8, densidad=35")
     send_sensor_event(2, 2, SENSOR_GPS, {
         "densidad": 35, "velocidad_promedio": 8, "nivel_congestion": "BAJA"
     })
     time.sleep(0.1)
-    log("CONGESTION", f"  → Sensor espira: vehiculos_por_minuto=28")
+    log("CONGESTION", f"  -> Sensor espira: vehiculos_por_minuto=28")
     send_sensor_event(2, 2, SENSOR_ESPIRA, {"vehiculos_por_minuto": 28})
-    log("CONGESTION", f"  → Analytics debería detectar CONGESTIÓN en {label}")
+    log("CONGESTION", f"  -> Analytics debería detectar CONGESTIÓN en {label}")
 
 def demo_congestion_d3():
     """t=95s: Congestión en D3"""
     label = display_intersection(4, 3)
     log("CONGESTION", f"Enviando congestión a {label}")
-    log("CONGESTION", f"  → Sensor camara: longitud_cola=18 (umbral=5)")
+    log("CONGESTION", f"  -> Sensor camara: longitud_cola=18 (umbral=5)")
     send_sensor_event(4, 3, SENSOR_CAMARA, {"longitud_cola": 18})
     time.sleep(0.1)
-    log("CONGESTION", f"  → Sensor GPS: velocidad=5, densidad=40")
+    log("CONGESTION", f"  -> Sensor GPS: velocidad=5, densidad=40")
     send_sensor_event(4, 3, SENSOR_GPS, {
         "densidad": 40, "velocidad_promedio": 5, "nivel_congestion": "BAJA"
     })
     time.sleep(0.1)
-    log("CONGESTION", f"  → Sensor espira: vehiculos_por_minuto=29")
+    log("CONGESTION", f"  -> Sensor espira: vehiculos_por_minuto=29")
     send_sensor_event(4, 3, SENSOR_ESPIRA, {"vehiculos_por_minuto": 29})
-    log("CONGESTION", f"  → Analytics debería detectar CONGESTIÓN en {label}")
+    log("CONGESTION", f"  -> Analytics debería detectar CONGESTIÓN en {label}")
 
 def demo_ambulancefila1():
     """t=130s: Ambulancia en fila 1"""
@@ -246,12 +246,12 @@ def demo_ambulancefila1():
     for c in range(1, grid["columns"] + 1):
         label = display_intersection(c, 1)
         sem_display = f"SEM_{label}_N"
-        log("AMBULANCIA", f"  → Override VERDE en {sem_display}")
+        log("AMBULANCIA", f"  -> Override VERDE en {sem_display}")
         ok = send_ambulance_override(c, 1)
         if ok:
-            log("AMBULANCIA", f"    ✓ {sem_display} → VERDE")
+            log("AMBULANCIA", f"    [OK] {sem_display} -> VERDE")
         else:
-            log("AMBULANCIA", f"    ✗ {sem_display} falló")
+            log("AMBULANCIA", f"    [X] {sem_display} falló")
         time.sleep(0.2)
 
 def demo_kill_db():
@@ -259,12 +259,12 @@ def demo_kill_db():
     log("FAILOVER", "Matando BD principal (main_db.py)...")
     ok = kill_main_db()
     if ok:
-        log("FAILOVER", "  ✓ main_db.py terminado")
+        log("FAILOVER", "  [OK] main_db.py terminado")
         timeout = config.get("heartbeat_timeout_seconds", 8)
-        log("FAILOVER", f"  → Analytics debería cambiar a BD réplica en ~{timeout}s")
-        log("FAILOVER", "  → (heartbeat timeout)")
+        log("FAILOVER", f"  -> Analytics debería cambiar a BD réplica en ~{timeout}s")
+        log("FAILOVER", "  -> (heartbeat timeout)")
     else:
-        log("FAILOVER", "  ✗ No se pudo matar main_db.py")
+        log("FAILOVER", "  [X] No se pudo matar main_db.py")
 
 def demo_ambulancefila1_2():
     """t=150s: Segunda ambulancia en fila 1"""
@@ -272,12 +272,12 @@ def demo_ambulancefila1_2():
     for c in range(1, grid["columns"] + 1):
         label = display_intersection(c, 1)
         sem_display = f"SEM_{label}_N"
-        log("AMBULANCIA", f"  → Override VERDE en {sem_display}")
+        log("AMBULANCIA", f"  -> Override VERDE en {sem_display}")
         ok = send_ambulance_override(c, 1)
         if ok:
-            log("AMBULANCIA", f"    ✓ {sem_display} → VERDE")
+            log("AMBULANCIA", f"    [OK] {sem_display} -> VERDE")
         else:
-            log("AMBULANCIA", f"    ✗ {sem_display} falló")
+            log("AMBULANCIA", f"    [X] {sem_display} falló")
         time.sleep(0.2)
 
 def demo_summary():
@@ -289,17 +289,17 @@ def demo_summary():
     log("RESUMEN", "Demo de sustentación completada")
     log("RESUMEN", "=" * 60)
     log("RESUMEN", "Eventos ejecutados:")
-    log("RESUMEN", f"  t=60s   → Congestión en {b2}")
-    log("RESUMEN", f"  t=95s   → Congestión en {d3}")
-    log("RESUMEN", f"  t=130s  → Ambulancia fila 1")
-    log("RESUMEN", f"  t=140s  → Caída BD principal (failover a réplica)")
-    log("RESUMEN", f"  t=150s  → Segunda ambulancia fila 1")
+    log("RESUMEN", f"  t=60s   -> Congestión en {b2}")
+    log("RESUMEN", f"  t=95s   -> Congestión en {d3}")
+    log("RESUMEN", f"  t=130s  -> Ambulancia fila 1")
+    log("RESUMEN", f"  t=140s  -> Caída BD principal (failover a réplica)")
+    log("RESUMEN", f"  t=150s  -> Segunda ambulancia fila 1")
     log("RESUMEN", "=" * 60)
     log("RESUMEN", "Puedes hacer consultas desde PC3:")
-    log("RESUMEN", f"  1 {b2}     → Ver estado de {b2}")
-    log("RESUMEN", f"  1 {d3}     → Ver estado de {d3}")
-    log("RESUMEN", "  3           → Listar semáforos (fila 1 debería estar en VERDE)")
-    log("RESUMEN", f"  5 {b2}     → Consulta histórica de {b2}")
+    log("RESUMEN", f"  1 {b2}     -> Ver estado de {b2}")
+    log("RESUMEN", f"  1 {d3}     -> Ver estado de {d3}")
+    log("RESUMEN", "  3           -> Listar semáforos (fila 1 debería estar en VERDE)")
+    log("RESUMEN", f"  5 {b2}     -> Consulta histórica de {b2}")
     log("RESUMEN", "=" * 60)
 
 # ─── Cronograma ───
@@ -319,12 +319,12 @@ def run_demo():
     print("=" * 60)
     print()
     log("CRONOGRAMA", "Eventos programados:")
-    log("CRONOGRAMA", f"  t=60s   → Congestión en {display_intersection(2, 2)}")
-    log("CRONOGRAMA", f"  t=95s   → Congestión en {display_intersection(4, 3)}")
-    log("CRONOGRAMA", f"  t=130s  → Ambulancia fila 1")
-    log("CRONOGRAMA", f"  t=140s  → Caída BD principal")
-    log("CRONOGRAMA", f"  t=150s  → Segunda ambulancia fila 1")
-    log("CRONOGRAMA", f"  t=160s  → Resumen")
+    log("CRONOGRAMA", f"  t=60s   -> Congestión en {display_intersection(2, 2)}")
+    log("CRONOGRAMA", f"  t=95s   -> Congestión en {display_intersection(4, 3)}")
+    log("CRONOGRAMA", f"  t=130s  -> Ambulancia fila 1")
+    log("CRONOGRAMA", f"  t=140s  -> Caída BD principal")
+    log("CRONOGRAMA", f"  t=150s  -> Segunda ambulancia fila 1")
+    log("CRONOGRAMA", f"  t=160s  -> Resumen")
     print()
     log("INICIO", "Esperando eventos... (Ctrl+C para cancelar)")
     print()
