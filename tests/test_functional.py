@@ -615,6 +615,44 @@ class TestAnalyticsReplicaActions(unittest.TestCase):
         self.assertEqual(self.db.get_semaforo_state("SEM_C1K1_S"), VERDE)
 
 
+class TestListarSemaforosSource(unittest.TestCase):
+    """LISTAR_SEMAFOROS debe declarar que la fuente real es la replica."""
+
+    def setUp(self):
+        from pc2.analytics_service import AnalyticsService
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "replica.db"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+        self.service = object.__new__(AnalyticsService)
+        self.service.config = {"grid": {"columns": 1, "rows": 1}}
+        self.service.replica_db = self.db
+
+    def tearDown(self):
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def _request(self):
+        return self.service._process_monitoring_request({
+            "tipo": "CONSULTA", "consulta": "LISTAR_SEMAFOROS",
+        })
+
+    def test_reports_replica_as_source_in_main_mode(self):
+        self.service.use_replica = False
+        response = self._request()
+        self.assertEqual(response.tipo, "RESPUESTA")
+        self.assertEqual(response.datos["db_mode"], "main")
+        self.assertEqual(response.datos["fuente"], "replica")
+        self.assertIn("Fuente: replica", response.mensaje)
+
+    def test_reports_replica_as_source_in_failover(self):
+        self.service.use_replica = True
+        response = self._request()
+        self.assertEqual(response.datos["db_mode"], "replica")
+        self.assertEqual(response.datos["fuente"], "replica")
+        self.assertIn("Modo: replica", response.mensaje)
+
+
 class TestReplicationSession(unittest.TestCase):
     """Verifica la persistencia de sesion/secuencia y el dedupe en la replica."""
 

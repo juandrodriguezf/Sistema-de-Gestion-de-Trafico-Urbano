@@ -648,7 +648,7 @@ class AnalyticsService:
                 )
 
             elif consulta == CMD_LISTAR_SEMAFOROS:
-                #se retorna los semaforos desde la bd replica, filtrados por grilla configurada
+                # Analytics siempre lee del archivo replica local; db_mode indica el modo de failover
                 sems = self.replica_db.get_all_semaforos(
                     columns=self.config["grid"]["columns"],
                     rows=self.config["grid"]["rows"]
@@ -656,8 +656,11 @@ class AnalyticsService:
                 mode_str = "replica" if self.use_replica else "main"
                 return MonitoringResponse(
                     tipo="RESPUESTA",
-                    datos={"semaforos": sems, "db_mode": mode_str},
-                    mensaje=f"Lista de {len(sems)} semáforos (Modo: {mode_str})"
+                    datos={"semaforos": sems, "db_mode": mode_str, "fuente": "replica"},
+                    mensaje=(
+                        f"Lista de {len(sems)} semáforos "
+                        f"(Modo: {mode_str}, Fuente: replica)"
+                    )
                 )
 
             elif consulta == "CONSULTA_HISTORICA":
