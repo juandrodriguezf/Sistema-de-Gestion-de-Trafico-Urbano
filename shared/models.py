@@ -174,6 +174,49 @@ class ReplicationMessage:
 
 
 # ═══════════════════════════════════════════
+# Reconciliación tras failover (Replica → Main DB)
+# ═══════════════════════════════════════════
+
+@dataclass
+class ResyncBatch:
+    """Lote de mensajes pendientes que la réplica envía a MainDB al recuperarse."""
+    mensajes: List[Dict[str, Any]] = field(default_factory=list)
+    session_id: str = ""
+    batch_id: str = field(default_factory=_uuid)
+    message_id: str = field(default_factory=_uuid)
+    timestamp: str = field(default_factory=_now)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ResyncBatch":
+        d = json.loads(raw)
+        return cls(**d)
+
+
+@dataclass
+class ResyncResponse:
+    """Resultado de aplicar un lote de reconciliación."""
+    tipo: str = "RESYNC_RESPONSE"
+    recibidos: int = 0
+    aplicados: int = 0
+    duplicados: int = 0
+    errores: int = 0
+    mensaje: str = ""
+    message_id: str = field(default_factory=_uuid)
+    timestamp: str = field(default_factory=_now)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ResyncResponse":
+        d = json.loads(raw)
+        return cls(**d)
+
+
+# ═══════════════════════════════════════════
 # Mensaje de Heartbeat
 # ═══════════════════════════════════════════
 

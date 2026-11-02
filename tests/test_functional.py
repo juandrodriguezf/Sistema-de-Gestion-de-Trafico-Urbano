@@ -17,7 +17,9 @@ from shared.constants import (
     SENSOR_ESPIRA, SENSOR_CAMARA, SENSOR_GPS,
     VERDE, ROJO, NORMAL, CONGESTION,
 )
-from shared.models import SensorEvent, TrafficState, LightAction, MonitoringRequest
+from shared.models import (
+    SensorEvent, TrafficState, LightAction, MonitoringRequest, ResyncBatch,
+)
 from shared.validation import validate_sensor_event, validate_override_command, validate_query
 from shared.db_utils import DatabaseManager
 
@@ -386,6 +388,92 @@ class TestMainDBEventSeparation(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["timestamp"], "2026-01-01T00:00:01Z")
         self.assertEqual(row["timestamp_sensor"], "2026-01-01T00:00:00Z")
+
+
+class TestMainDBResync(unittest.TestCase):
+    """Verifica que el endpoint de resync sea idempotente."""
+
+    def setUp(self):
+        from pc3.main_db import MainDBService
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db = DatabaseManager(os.path.join(self.tmpdir.name, "main.db"))
+        self.db.connect()
+        self.db.seed_all(1, 1, ["N", "S", "E", "W"])
+        self.service = object.__new__(MainDBService)
+        self.service.db = self.db
+        self.service.sequence_number = 0
+
+    def tearDown(self):
+        self.db.close()
+        self.tmpdir.cleanup()
+
+    def _batch(self):
+        return ResyncBatch(mensajes=[
+            {
+                "tabla": "eventos", "operacion": "INSERT",
+                "datos": {
+                    "evento_id": "evt-1", "sensor_id": "ESP_C1K1",
+                    "interseccion_id": "INT_C1K1", "tipo_sensor": "espira",
+                    "datos": {"vehiculos_por_minuto": 5},
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "timestamp_sensor": "2026-01-01T00:00:00Z",
+                },
+            },
+            {
+                "tabla": "estado_trafico", "operacion": "INSERT",
+                "datos": {
+                    "interseccion_id": "INT_C1K1", "Q": 1, "Vp": 40, "D": 5,
+                    "vehiculos_por_minuto": 5, "estado": "normal",
+                    "timestamp": "2026-01-01T00:00:01Z", "message_id": "st-1",
+                },
+            },
+            {
+                "tabla": "acciones_semaforo", "operacion": "INSERT",
+                "datos": {
+                    "accion_id": "ac-1", "semaforo_id": "SEM_C1K1_N",
+                    "estado_anterior": "VERDE", "estado_nuevo": "ROJO",
+                    "razon": "normal", "origen": "analytics",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                },
+            },
+            {
+                "tabla": "semaforos", "operacion": "UPDATE",
+                "datos": {
+                    "semaforo_id": "SEM_C1K1_N", "estado_actual": "ROJO",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                },
+            },
+        ])
+
+    def test_resync_batch_is_idempotent(self):
+        first = self.service.process_resync_batch(self._batch())
+        self.assertEqual(first.recibidos, 4)
+        self.assertEqual(first.aplicados, 4)
+        self.assertEqual(first.duplicados, 0)
+        self.assertEqual(first.errores, 0)
+
+        second = self.service.process_resync_batch(self._batch())
+        self.assertEqual(second.aplicados, 0)
+        self.assertEqual(second.duplicados, 4)
+        self.assertEqual(second.errores, 0)
+
+        self.assertEqual(self.db.get_event_count(), 1)
+        count = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM estado_trafico"
+        ).fetchone()["cnt"]
+        self.assertEqual(count, 1)
+        count = self.db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM acciones_semaforo"
+        ).fetchone()["cnt"]
+        self.assertEqual(count, 1)
+
+    def test_resync_reports_unsupported_message(self):
+        batch = ResyncBatch(mensajes=[
+            {"tabla": "desconocida", "operacion": "INSERT", "datos": {}},
+        ])
+        response = self.service.process_resync_batch(batch)
+        self.assertEqual(response.recibidos, 1)
+        self.assertEqual(response.errores, 1)
 
 
 class TestAnalyticsReplicaActions(unittest.TestCase):

@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from shared.models import TrafficState, ReplicationMessage, Heartbeat, _now
+from shared.models import (
+    TrafficState, ReplicationMessage, Heartbeat, ResyncBatch, ResyncResponse, _now
+)
 from shared.db_utils import DatabaseManager
 from shared.constants import TOPIC_SYNC, TOPIC_HEARTBEAT
 
@@ -39,6 +41,8 @@ class MainDBService:
         self.grid = config["grid"]
         self.ports = config["zmq_ports"]
         self.heartbeat_interval = config.get("heartbeat_interval_seconds", 5)
+        self.resync_batch_size = config.get("resync_batch_size", 100)
+        self.resync_timeout = config.get("resync_timeout_seconds", 5)
         self.running = False
         self.sequence_number = 0
 
@@ -190,6 +194,125 @@ class MainDBService:
         except Exception as e:
             logger.error(f"error al procesar el registro: {e}")
 
+    # ═══════════════════════════════════════════
+    # Reconciliación tras failover (REP)
+    # ═══════════════════════════════════════════
+
+    def apply_resync_message(self, msg: dict) -> str:
+        """Aplica un mensaje del outbox de forma idempotente.
+
+        Returns: "aplicado" | "duplicado".
+        """
+        tabla = msg.get("tabla", "")
+        operacion = msg.get("operacion", "")
+        datos = msg.get("datos") or {}
+
+        if tabla == "eventos" and operacion == "INSERT":
+            evento_id = datos.get("evento_id", "")
+            if not evento_id or self.db.event_exists(evento_id):
+                return "duplicado"
+            self.db.insert_event(
+                evento_id,
+                datos.get("sensor_id", ""),
+                datos.get("interseccion_id", ""),
+                datos.get("tipo_sensor", ""),
+                datos.get("datos", {}),
+                datos.get("timestamp", ""),
+                timestamp_sensor=datos.get("timestamp_sensor"),
+            )
+            return "aplicado"
+
+        if tabla == "estado_trafico" and operacion == "INSERT":
+            message_id = datos.get("message_id")
+            if self.db.traffic_state_exists(message_id):
+                return "duplicado"
+            self.db.insert_traffic_state(
+                datos.get("interseccion_id", ""),
+                datos.get("Q", 0),
+                datos.get("Vp", 0),
+                datos.get("D", 0),
+                datos.get("vehiculos_por_minuto", 0),
+                datos.get("estado", "normal"),
+                datos.get("timestamp", ""),
+                message_id=message_id,
+            )
+            return "aplicado"
+
+        if tabla == "acciones_semaforo" and operacion == "INSERT":
+            accion_id = datos.get("accion_id", "")
+            if not accion_id or self.db.light_action_exists(accion_id):
+                return "duplicado"
+            self.db.insert_light_action(
+                accion_id,
+                datos.get("semaforo_id", ""),
+                datos.get("estado_anterior", ""),
+                datos.get("estado_nuevo", ""),
+                datos.get("razon", ""),
+                datos.get("origen", ""),
+                datos.get("timestamp", ""),
+            )
+            return "aplicado"
+
+        if tabla == "semaforos" and operacion == "UPDATE":
+            sem_id = datos.get("semaforo_id", "")
+            nuevo_estado = datos.get("estado_actual", "")
+            if not sem_id:
+                return "duplicado"
+            if self.db.get_semaforo_state(sem_id) == nuevo_estado:
+                return "duplicado"
+            self.db.update_semaforo(sem_id, nuevo_estado, datos.get("timestamp", ""))
+            return "aplicado"
+
+        raise ValueError(f"mensaje de resync no soportado: {tabla}/{operacion}")
+
+    def process_resync_batch(self, batch: ResyncBatch) -> ResyncResponse:
+        """Aplica un lote completo y devuelve el resumen."""
+        aplicados = duplicados = errores = 0
+        for msg in batch.mensajes:
+            try:
+                resultado = self.apply_resync_message(msg)
+                if resultado == "aplicado":
+                    aplicados += 1
+                else:
+                    duplicados += 1
+            except Exception as e:
+                errores += 1
+                logger.error(f"Error al aplicar resync: {e}")
+
+        logger.info(
+            f"Resync {batch.batch_id[:8]}: recibidos={len(batch.mensajes)} "
+            f"aplicados={aplicados} duplicados={duplicados} errores={errores}"
+        )
+        return ResyncResponse(
+            recibidos=len(batch.mensajes),
+            aplicados=aplicados,
+            duplicados=duplicados,
+            errores=errores,
+            mensaje=f"Resync aplicado: {aplicados} nuevos, {duplicados} duplicados",
+        )
+
+    def handle_resync(self, rep_socket: zmq.Socket):
+        """Atiende lotes de reconciliacion desde la replica."""
+        logger.info("Endpoint de resync listo")
+        while self.running:
+            try:
+                if rep_socket.poll(1000):
+                    raw = rep_socket.recv_string()
+                    try:
+                        batch = ResyncBatch.from_json(raw)
+                        response = self.process_resync_batch(batch)
+                    except Exception as e:
+                        logger.error(f"Lote de resync invalido: {e}")
+                        response = ResyncResponse(
+                            tipo="ERROR", mensaje=f"Lote invalido: {e}"
+                        )
+                    rep_socket.send_string(response.to_json())
+            except zmq.ZMQError as e:
+                if self.running:
+                    logger.error(f"Error en el endpoint de resync: {e}")
+            except Exception as e:
+                logger.error(f"Error en el endpoint de resync: {e}")
+
     def run(self):
         """Inicia el servicio de base de datos principal."""
         pc3_host = self.config.get("pc3_host", "localhost")
@@ -209,6 +332,11 @@ class MainDBService:
         hb_pub.bind(f"tcp://{pc3_host}:{self.ports['heartbeat']}")
         logger.info(f"heartbeat PUB bound at tcp://{pc3_host}:{self.ports['heartbeat']}")
 
+        # REP socket: reconciliacion desde la replica tras failover
+        resync_rep = self.context.socket(zmq.REP)
+        resync_rep.bind(f"tcp://{pc3_host}:{self.ports['resync_port']}")
+        logger.info(f"resync REP bound at tcp://{pc3_host}:{self.ports['resync_port']}")
+
         # Inicializa la base de datos
         self.db.connect()
         self.db.seed_all(
@@ -220,6 +348,9 @@ class MainDBService:
         # Inicia el heartbeat en un hilo separado
         hb_thread = threading.Thread(target=self.send_heartbeat, args=(hb_pub,), daemon=True)
         hb_thread.start()
+
+        resync_thread = threading.Thread(target=self.handle_resync, args=(resync_rep,), daemon=True)
+        resync_thread.start()
 
         logger.info("el servicio de base de datos principal esta funcionando")
         record_count = 0
@@ -245,6 +376,7 @@ class MainDBService:
             pull_socket.close()
             rep_pub.close()
             hb_pub.close()
+            resync_rep.close()
             self.context.term()
             logger.info(f"el servicio se detuvo correctamente, total de registros: {record_count}")
 

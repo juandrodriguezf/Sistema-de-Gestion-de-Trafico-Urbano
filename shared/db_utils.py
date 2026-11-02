@@ -263,6 +263,28 @@ class DatabaseManager:
         ).fetchone()
         return row["estado_actual"] if row else None
 
+    # ─── Existencia (idempotencia de resync) ───
+
+    def event_exists(self, evento_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM eventos WHERE evento_id = ?", (evento_id,)
+        ).fetchone()
+        return row is not None
+
+    def traffic_state_exists(self, message_id: str) -> bool:
+        if not message_id:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM estado_trafico WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return row is not None
+
+    def light_action_exists(self, accion_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM acciones_semaforo WHERE accion_id = ?", (accion_id,)
+        ).fetchone()
+        return row is not None
+
     # ─── Operaciones de consulta ───
 
     def get_intersection_state(self, interseccion_id: str) -> Optional[Dict[str, Any]]:
